@@ -1,0 +1,33 @@
+<div class="stack">
+  <p>
+    评测器：{% if judge_alive %}<span class="badge badge-ok">运行中</span>{% else %}<span class="badge badge-bad">不可用</span>{% endif %}
+    <span class="muted">并发 {{ concurrency }} · 队列深度 {{ queue_depth }}</span>
+  </p>
+
+  <div class="stat-grid">
+    <div class="stat">
+      <div class="stat-label">排队中</div>
+      <div class="stat-value">{{ queued }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">编译中</div>
+      <div class="stat-value">{{ compiling }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">运行中</div>
+      <div class="stat-value">{{ running }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">已完成</div>
+      <div class="stat-value">{{ done }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">评测异常</div>
+      <div class="stat-value">{{ failed }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">活动任务</div>
+      <div class="stat-value">{{ active }}</div>
+    </div>
+  </div>
+</div>

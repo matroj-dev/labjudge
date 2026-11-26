@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}系统信息 - 管理端{% endblock %}
+
+{% block content %}
+<div class="page-nav">
+  <h1>系统信息</h1>
+  <div class="page-nav-actions">
+    <a class="button-link" href="/admin">管理首页</a>
+    <form method="post" action="/admin/logout">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit">退出</button>
+    </form>
+  </div>
+</div>
+
+<section class="card stack">
+  <h2>运行状态</h2>
+  <table>
+    <tbody>
+      <tr><th>端口</th><td>{{ port }}</td></tr>
+      <tr><th>g++ 路径</th><td><code>{{ compiler_path }}</code></td></tr>
+      <tr><th>g++ 版本</th><td>{{ compiler_version }}</td></tr>
+      <tr><th>go-judge 版本</th><td>{{ judge_version }}</td></tr>
+      <tr><th>go-judge 状态</th><td>{% if judge_alive %}正常{% else %}不可用{% endif %}</td></tr>
+      <tr><th>磁盘可用/总量</th><td>{{ disk_free_text }} / {{ disk_total_text }}</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="card stack">
+  <h2>访问地址</h2>
+  <p class="muted">学生机浏览器打开下面任意一个地址即可参赛。</p>
+  <ul>
+    {% for address in addresses %}<li><code>{{ address }}</code></li>{% endfor %}
+  </ul>
+</section>
+
+<section class="card stack">
+  <h2>修改管理口令</h2>
+  <form class="inline-form" method="post" action="/admin/password">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="password" name="new_password" maxlength="64" required>
+    <button type="submit">保存新口令</button>
+  </form>
+</section>
+{% endblock %}

@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block title %}{{ contest_title }}{% endblock %}
+
+{% block header_extra %}
+<form class="inline-form" method="post" action="/logout">
+  <input type="hidden" name="contest_id" value="{{ contest_id }}">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button class="link-button" type="submit">退出</button>
+</form>
+{% endblock %}
+
+{% block content %}
+<section class="card stack">
+  <h1>{{ contest_title }}</h1>
+  <p>
+    状态：<strong data-state>{{ state_label }}</strong>{% if !waiting %} ·
+    剩余 <strong class="countdown" data-countdown data-contest="{{ contest_id }}" data-seconds="{{ remaining_seconds }}">{{ remaining_text }}</strong>{% endif %}
+  </p>
+</section>
+
+{% if waiting %}
+<section class="card stack" data-waiting data-contest="{{ contest_id }}">
+  <h2>比赛尚未开始</h2>
+  <p>请等待老师开始比赛。本页会自动刷新，开赛后题目立即出现。</p>
+</section>
+{% else %}
+<div class="tabs" data-tabs>
+  <div class="tab-bar" role="tablist">
+    <button type="button" class="tab-button" data-tab="problems" role="tab">题目列表</button>
+    <button type="button" class="tab-button" data-tab="me" role="tab">我的信息</button>
+    <button type="button" class="tab-button" data-tab="rank" role="tab">排行榜</button>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="problems">
+    <section class="card stack">
+      <div class="page-nav">
+        <h2>题目列表</h2>
+        <a href="/c/{{ contest_id }}/all">全部题面</a>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>题号</th><th>标题</th><th>满分</th><th></th></tr>
+          </thead>
+          <tbody>
+            {% for problem in problems %}
+            <tr>
+              <td>{{ problem.key }}</td>
+              <td>{{ problem.title }}</td>
+              <td>{{ problem.full_score }}</td>
+              <td><a href="/c/{{ contest_id }}/p/{{ problem.key }}">进入</a></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="me" hidden>
+    <section class="card stack">
+      <h2>我的信息</h2>
+      <table class="kv">
+        <tbody>
+          <tr><th>姓名</th><td>{{ student_name }}</td></tr>
+          <tr><th>学校</th><td>{{ student_school }}</td></tr>
+          <tr><th>年级</th><td>{{ student_grade }}</td></tr>
+          <tr><th>进入比赛</th><td>{{ joined_text }}</td></tr>
+          <tr><th>最近活动</th><td>{{ last_seen_text }}</td></tr>
+          <tr><th>比赛开始</th><td>{{ started_text }}</td></tr>
+          <tr><th>比赛结束</th><td>{{ ends_text }}</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card stack">
+      <div class="page-nav">
+        <h2>我的提交</h2>
+        <span class="muted">每 2 秒自动刷新，点一行展开测试点详情</span>
+      </div>
+      <div class="fragment" data-fragment-url="{{ mine_url }}" data-interval="2000">
+        <div class="fragment-content">{{ mine_html|safe }}</div>
+        <p class="muted poll-error" data-poll-error hidden>刷新失败，正在重试。</p>
+      </div>
+    </section>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="rank" hidden>
+    <section class="card stack">
+      <div class="page-nav">
+        <h2>排行榜</h2>
+        <span class="muted">榜单公开后自动出现 · 每 5 秒刷新</span>
+      </div>
+      <div class="fragment" data-fragment-url="{{ rank_url }}" data-interval="5000">
+        <div class="fragment-content">{{ rank_html|safe }}</div>
+        <p class="muted poll-error" data-poll-error hidden>刷新失败，正在重试。</p>
+      </div>
+    </section>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

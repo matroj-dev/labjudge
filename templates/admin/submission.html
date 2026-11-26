@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}提交 {{ sid }} - 管理端{% endblock %}
+
+{% block content %}
+<div class="page-nav">
+  <h1>提交 {{ sid }}</h1>
+  <span class="muted">{{ submission.created_at_text }} · {{ submission.status_label }} ·
+    {{ submission.verdict_label }} · {{ submission.score }} 分</span>
+  <div class="page-nav-actions">
+    <form method="post" action="/admin/logout">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit">退出</button>
+    </form>
+  </div>
+</div>
+
+<section class="card stack">
+  <h2>评测结果</h2>
+  {% for group in submission.groups %}
+  <details open>
+    <summary>{{ group.name }}：{{ group.score }} / {{ group.max_score }}</summary>
+    <table>
+      <thead><tr><th>测试点</th><th>判定</th><th>时间</th><th>内存</th><th>得分</th></tr></thead>
+      <tbody>
+        {% for case in group.cases %}
+        <tr>
+          <td>{{ case.name }}</td><td>{{ case.verdict }}</td><td>{{ case.time_ms }} ms</td>
+          <td>{{ case.memory_kb }} KB</td><td>{{ case.score }} / {{ case.max_score }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
+  {% endfor %}
+  {% if submission.has_compile_output %}
+  <details open><summary>编译输出</summary><pre>{{ submission.compile_output }}</pre></details>
+  {% endif %}
+  {% if submission.error.len() > 0 %}
+  <div class="error-box">{{ submission.error }}</div>
+  {% endif %}
+</section>
+
+<section class="card stack">
+  <h2>源码</h2>
+  <pre>{{ source }}</pre>
+</section>
+
+<section class="card stack">
+  <h2>操作</h2>
+  <div class="action-grid">
+    <form method="post" action="/admin/s/{{ sid }}/rejudge">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="confirm" value="yes">
+      <button type="submit" onclick="return confirm('确认重测该提交？')">重测</button>
+    </form>
+    <form method="post" action="/admin/s/{{ sid }}/delete">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="confirm" value="yes">
+      <button class="danger-button" type="submit" onclick="return confirm('确认删除该提交及源码？')">删除</button>
+    </form>
+  </div>
+</section>
+{% endblock %}

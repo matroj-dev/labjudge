@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}{{ problem_key }}. {{ problem_title }} - {{ contest_title }}{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="/static/vendor/codemirror/codemirror.css">
+{% endblock %}
+
+{% block mathjax %}
+<script>window.MathJax={tex:{inlineMath:[['\\(','\\)']],displayMath:[['\\[','\\]']]},svg:{fontCache:'local'}};</script>
+<script defer src="/static/vendor/mathjax/tex-svg.js"></script>
+{% endblock %}
+
+{% block header_extra %}
+<form class="inline-form" method="post" action="/logout">
+  <input type="hidden" name="contest_id" value="{{ contest_id }}">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button class="link-button" type="submit">退出</button>
+</form>
+{% endblock %}
+
+{% block content %}
+<div class="page-nav">
+  <a href="/c/{{ contest_id }}#problems">返回题目列表</a>
+  <a href="/c/{{ contest_id }}/all">全部题面</a>
+  <span class="muted">状态：{{ state_label }}</span>
+</div>
+
+<section class="card statement stack">
+  <h2>{{ problem_key }}. {{ problem_title }}</h2>
+  <p class="muted">
+    时空限制：{{ time_limit_ms }} ms / {{ memory_limit_mb }} MiB
+  </p>
+  <div>{{ statement_html|safe }}</div>
+</section>
+
+<section class="card stack">
+  <h2>提交代码</h2>
+  <form method="post" action="/c/{{ contest_id }}/submissions">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="problem_key" value="{{ problem_key }}">
+    <textarea id="editor" name="source"
+      data-contest="{{ contest_id }}"
+      data-student="{{ student_id }}"
+      data-problem="{{ problem_key }}"
+      spellcheck="false"></textarea>
+    <p class="muted">按“比赛 + 学生 + 题目”保存草稿到本机浏览器。</p>
+    <div class="submit-actions">
+      <button type="submit" {% if submit_disabled %}disabled{% endif %}>提交</button>
+      {% if submit_disabled %}<span class="muted">{{ submit_hint }}</span>{% endif %}
+      {% if submitted %}
+      <span class="notice-inline" data-submitted-notice role="status">
+        已提交，正在评测 · <a href="{{ mine_url }}">去「我的信息」查看</a>
+      </span>
+      {% endif %}
+    </div>
+  </form>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/vendor/codemirror/codemirror.js"></script>
+<script src="/static/vendor/codemirror/clike.js"></script>
+{% endblock %}

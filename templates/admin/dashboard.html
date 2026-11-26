@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}管理端 - MatrOJ 局域网比赛系统{% endblock %}
+
+{% block content %}
+<div class="page-nav">
+  <h1>管理端</h1>
+  <div class="page-nav-actions">
+    <a class="button-link" href="/admin/system">系统信息</a>
+    <form method="post" action="/admin/logout">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit">退出管理端</button>
+    </form>
+  </div>
+</div>
+
+{% if contests.len() == 0 %}
+<p class="muted">暂无有效比赛。</p>
+{% else %}
+<div class="stack">
+  {% for contest in contests %}
+  <section class="card">
+    <h2><a href="/admin/c/{{ contest.id }}">{{ contest.title }}</a></h2>
+    <p class="muted">
+      状态：{{ contest.state_label }} · 时长：{{ contest.duration_minutes }} 分钟 ·
+      题数：{{ contest.problem_count }} · {{ contest.visibility_label }}
+    </p>
+  </section>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if invalid.len() > 0 %}
+<section class="card error-box stack">
+  <h2>比赛包校验失败</h2>
+  <table>
+    <thead><tr><th>目录</th><th>路径</th><th>原因</th></tr></thead>
+    <tbody>
+      {% for item in invalid %}
+      <tr>
+        <td>{{ item.id }}</td>
+        <td><code>{{ item.path }}</code></td>
+        <td>{{ item.reason }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% endblock %}

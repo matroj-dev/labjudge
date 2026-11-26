@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}提交记录 - 管理端{% endblock %}
+
+{% block content %}
+<div class="page-nav">
+  <h1>提交记录</h1>
+  <a href="/admin/c/{{ contest_id }}">返回比赛</a>
+  <div class="page-nav-actions">
+    <form method="post" action="/admin/logout">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit">退出</button>
+    </form>
+  </div>
+</div>
+
+<div class="table-wrap card">
+  <table>
+    <thead><tr><th>提交号</th><th>时间</th><th>学生</th><th>题目</th><th>状态</th><th>判定</th><th>得分</th></tr></thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td><a href="/admin/s/{{ row.sid }}">{{ row.sid }}</a></td>
+        <td>{{ row.created_text }}</td>
+        <td>{{ row.student_name }}</td>
+        <td>{{ row.problem_key }}</td>
+        <td>{{ row.status_label }}</td>
+        <td>{{ row.verdict_label }}</td>
+        <td>{{ row.score }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if rows.len() == 0 %}<p class="muted">暂无提交。</p>{% endif %}
+
+<div class="page-nav">
+  {% if page > 1 %}<a href="/admin/c/{{ contest_id }}/submissions?page={{ page - 1 }}">上一页</a>{% endif %}
+  {% if has_next %}<a href="/admin/c/{{ contest_id }}/submissions?page={{ page + 1 }}">下一页</a>{% endif %}
+</div>
+{% endblock %}

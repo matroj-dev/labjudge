@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}全部题面 - {{ contest_title }}{% endblock %}
+
+{% block mathjax %}
+<script>window.MathJax={tex:{inlineMath:[['\\(','\\)']],displayMath:[['\\[','\\]']]},svg:{fontCache:'local'}};</script>
+<script defer src="/static/vendor/mathjax/tex-svg.js"></script>
+{% endblock %}
+
+{% block header_extra %}
+<form class="inline-form" method="post" action="/logout">
+  <input type="hidden" name="contest_id" value="{{ contest_id }}">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button class="link-button" type="submit">退出</button>
+</form>
+{% endblock %}
+
+{% block content %}
+<div class="page-nav">
+  <a href="/c/{{ contest_id }}">返回比赛首页</a>
+  <span class="muted">全部题面 · 只读</span>
+</div>
+
+{% for problem in problems %}
+<section class="card statement stack">
+  <h2>{{ problem.key }}. {{ problem.title }}</h2>
+  <p class="muted">
+    时间限制：{{ problem.time_limit_ms }} ms · 内存限制：{{ problem.memory_limit_mb }} MiB ·
+    满分：{{ problem.full_score }}
+  </p>
+  <div>{{ problem.statement_html|safe }}</div>
+</section>
+{% endfor %}
+{% endblock %}

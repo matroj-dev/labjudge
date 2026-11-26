@@ -1,0 +1,21 @@
+{% if rows.len() == 0 %}
+<p class="muted">暂无提交。</p>
+{% else %}
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>时间</th><th>学生</th><th>题目</th><th>状态</th><th>判定</th><th>得分</th></tr></thead>
+    <tbody>
+      {% for item in rows %}
+      <tr>
+        <td class="nowrap">{{ item.created_text }}</td>
+        <td><a href="/admin/s/{{ item.sid }}">{{ item.student_name }}</a></td>
+        <td>{{ item.problem_key }}</td>
+        <td>{{ item.status_label }}</td>
+        <td>{{ item.verdict_label }}</td>
+        <td>{{ item.score }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block title %}教师登录 - MatrOJ 局域网比赛系统{% endblock %}
+
+{% block content %}
+<section class="card stack narrow-card">
+  <h1>教师登录</h1>
+  {% if error.len() > 0 %}
+  <div class="error-box">{{ error }}</div>
+  {% endif %}
+  <form method="post" action="/admin/login" class="stack">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>
+      管理口令
+      <input type="password" name="password" maxlength="64" required autofocus>
+    </label>
+    <button type="submit">登录</button>
+  </form>
+</section>
+{% endblock %}

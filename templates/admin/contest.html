@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }} - 管理端{% endblock %}
+
+{% block content %}
+<div class="page-nav">
+  <h1>{{ title }}</h1>
+  <div class="page-nav-actions">
+    <a class="button-link" href="/admin">管理首页</a>
+    <form method="post" action="/admin/logout">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit">退出</button>
+    </form>
+  </div>
+</div>
+
+<div class="tabs" data-tabs>
+  <div class="tab-bar" role="tablist">
+    <button type="button" class="tab-button" data-tab="info" role="tab">比赛信息与题目</button>
+    <button type="button" class="tab-button" data-tab="monitor" role="tab">实时监控</button>
+    <button type="button" class="tab-button" data-tab="roster" role="tab">参赛者名单</button>
+    <button type="button" class="tab-button" data-tab="rank" role="tab">排行榜</button>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="info">
+    <section class="card stack">
+      <h2>比赛信息</h2>
+      <table class="kv">
+        <tbody>
+          <tr><th>状态</th><td>{{ state_label }}</td></tr>
+          <tr><th>时长</th><td>{{ duration_minutes }} 分钟</td></tr>
+          <tr><th>开赛时间</th><td>{{ started_text }}</td></tr>
+          <tr><th>截止时间</th><td>{{ ends_text }}</td></tr>
+          <tr><th>榜单</th><td>{% if leaderboard_visible %}公开{% else %}隐藏（学生只能看到自己的提交状态）{% endif %}</td></tr>
+          <tr><th>规模</th><td>{{ problem_count }} 题 · {{ roster_count }} 人，已进入 {{ joined_count }} 人</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card stack">
+      <h2>比赛操作</h2>
+      <div class="action-grid">
+        {% if is_not_started %}
+        <form method="post" action="/admin/c/{{ contest_id }}/start">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit">开始比赛</button>
+        </form>
+        {% endif %}
+        {% if is_running %}
+        <form method="post" action="/admin/c/{{ contest_id }}/end">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit" onclick="return confirm('确认提前结束比赛？')">提前结束</button>
+        </form>
+        <form class="inline-form" method="post" action="/admin/c/{{ contest_id }}/extend">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="number" name="minutes" min="1" max="600" value="10" class="short-input">
+          <button type="submit">延长比赛</button>
+          <span class="muted">在当前截止时间上再加分钟数</span>
+        </form>
+        {% endif %}
+        {% if is_ended %}
+        <form class="inline-form" method="post" action="/admin/c/{{ contest_id }}/extend">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="number" name="minutes" min="1" max="600" value="10" class="short-input">
+          <button type="submit">恢复比赛</button>
+          <span class="muted">从现在起再开放这么多分钟，学生可继续提交</span>
+        </form>
+        {% endif %}
+        <form method="post" action="/admin/c/{{ contest_id }}/leaderboard">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit">切换榜单公开状态</button>
+        </form>
+        {% if is_not_started %}
+        <form method="post" action="/admin/c/{{ contest_id }}/reload">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit">重新加载题包/名单</button>
+        </form>
+        {% endif %}
+      </div>
+      {% if is_not_started %}
+      <p class="muted">学生端现在只显示等待页，题面不会下发；改完名单或题包后点「重新加载」即可生效。</p>
+      {% endif %}
+    </section>
+
+    <section class="card stack">
+      <h2>题目（{{ problem_count }}）</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>题号</th><th>标题</th><th>满分</th></tr></thead>
+          <tbody>
+            {% for problem in problems %}
+            <tr><td>{{ problem.key }}</td><td>{{ problem.title }}</td><td>{{ problem.full_score }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    {% if is_ended %}
+    <section class="card stack">
+      <h2>导出成绩</h2>
+      <p class="muted">比赛已结束，可导出成绩表与全部源码。</p>
+      <div class="action-grid">
+        <a class="button-link" href="/admin/c/{{ contest_id }}/export.csv">下载成绩 CSV</a>
+        <a class="button-link" href="/admin/c/{{ contest_id }}/sources.zip">下载源码 zip</a>
+      </div>
+    </section>
+    {% endif %}
+
+    <section class="card stack">
+      <h2>危险操作</h2>
+      <div class="action-grid">
+        <form method="post" action="/admin/c/{{ contest_id }}/rejudge-all">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="confirm" value="yes">
+          <button type="submit" onclick="return confirm('确认全部重测？有活动任务时会被拒绝。')">全部重测</button>
+        </form>
+        <form method="post" action="/admin/c/{{ contest_id }}/reset">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="confirm" value="yes">
+          <button class="danger-button" type="submit" onclick="return confirm('确认重置？将删除本场全部提交、成绩、参赛记录与比赛状态，回到未开始，不可撤销。')">重置比赛</button>
+        </form>
+      </div>
+      <p class="muted">
+        <strong>全部重测</strong>：清空本场全部判题结果并重新评测，提交记录与比赛状态不变。<br>
+        <strong>重置比赛</strong>：删除本场全部运行数据（提交、成绩、参赛记录、开赛时间），题目与名单保留，
+        比赛回到「未开始」。用于彩排后正式开赛，或同一套题重复使用；删除后无法找回。
+      </p>
+    </section>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="monitor" hidden>
+    <section class="card stack">
+      <div class="page-nav">
+        <h2>评测器状态</h2>
+        <span class="muted">每 3 秒自动刷新</span>
+      </div>
+      <div class="fragment" data-fragment-url="{{ monitor_url }}" data-interval="3000">
+        <div class="fragment-content">{{ monitor_html|safe }}</div>
+        <p class="muted poll-error" data-poll-error hidden>刷新失败，正在重试。</p>
+      </div>
+    </section>
+
+    <section class="card stack">
+      <div class="page-nav">
+        <h2>最近提交</h2>
+        <a href="/admin/c/{{ contest_id }}/submissions">全部提交</a>
+        <span class="muted">最近 20 条 · 每 3 秒刷新</span>
+      </div>
+      <div class="fragment" data-fragment-url="{{ recent_url }}" data-interval="3000">
+        <div class="fragment-content">{{ recent_html|safe }}</div>
+        <p class="muted poll-error" data-poll-error hidden>刷新失败，正在重试。</p>
+      </div>
+    </section>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="roster" hidden>
+    <section class="card stack">
+      <div class="page-nav">
+        <h2>参赛者名单（{{ roster_count }} 人）</h2>
+        <span class="muted">已进入 {{ joined_count }} 人 · 未进入的排在最前</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>姓名</th><th>状态</th><th>最近活动</th><th>提交</th></tr>
+          </thead>
+          <tbody>
+            {% for student in roster %}
+            <tr>
+              <td>
+                <div>{{ student.name }}</div>
+                <div class="sub-line">{{ student.school }} · {{ student.grade }}</div>
+              </td>
+              <td>
+                {% if student.joined %}<span class="badge badge-ok">已进入</span>
+                {% else %}<span class="badge badge-muted">未进入</span>{% endif %}
+              </td>
+              <td class="nowrap">{% if student.joined %}{{ student.last_seen_text }}{% else %}—{% endif %}</td>
+              <td>{{ student.submission_count }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">「已进入」表示这位同学确实用自己的账号登录了本场比赛；「最近活动」是他最后一次打开比赛页面的时间。</p>
+    </section>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="rank" hidden>
+    <section class="card stack">
+      <div class="page-nav">
+        <h2>排行榜</h2>
+        <span class="muted">教师视角，不受「榜单公开」开关限制 · 每 5 秒刷新</span>
+      </div>
+      <div class="fragment" data-fragment-url="{{ rank_url }}" data-interval="5000">
+        <div class="fragment-content">{{ rank_html|safe }}</div>
+        <p class="muted poll-error" data-poll-error hidden>刷新失败，正在重试。</p>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}

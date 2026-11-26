@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+
+{% block title %}{{ status }} - MatrOJ 局域网比赛系统{% endblock %}
+
+{% block content %}
+<section class="card error-box">
+  <h1>{{ status }}</h1>
+  <p>{{ message }}</p>
+  <p><a href="/">返回比赛列表</a></p>
+</section>
+{% endblock %}

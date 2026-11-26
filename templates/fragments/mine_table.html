@@ -1,0 +1,64 @@
+{% if rows.len() == 0 %}
+<p class="muted">暂无提交。</p>
+{% else %}
+<div class="sub-list">
+  {% for row in rows %}
+  {% if visible %}
+  <details class="sub-item" data-key="sub-{{ row.id }}">
+    <summary class="sub-head">
+      <span class="sub-time">{{ row.created_at_text }}</span>
+      <span class="sub-problem">题目 {{ row.problem_key }}</span>
+      <span class="sub-status">{{ row.status_label }}</span>
+      <span class="sub-verdict">{{ row.verdict_label }}</span>
+      <span class="sub-score">{{ row.score }} 分</span>
+    </summary>
+    <div class="sub-body">
+      {% for group in row.groups %}
+      <details class="sub-group" data-key="sub-{{ row.id }}-g{{ loop.index0 }}">
+        <summary>{{ group.name }}：{{ group.score }} / {{ group.max_score }}</summary>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>测试点</th><th>判定</th><th>时间</th><th>内存</th><th>得分</th></tr>
+            </thead>
+            <tbody>
+              {% for case in group.cases %}
+              <tr>
+                <td>{{ case.name }}</td>
+                <td>{{ case.verdict }}</td>
+                <td>{{ case.time_ms }} ms</td>
+                <td>{{ case.memory_kb }} KB</td>
+                <td>{{ case.score }} / {{ case.max_score }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </details>
+      {% endfor %}
+      {% if row.has_compile_output %}
+      <details class="sub-group" data-key="sub-{{ row.id }}-compile">
+        <summary>编译输出</summary>
+        <pre>{{ row.compile_output }}</pre>
+      </details>
+      {% endif %}
+      {% if row.error.len() > 0 %}
+      <p class="muted">评测异常：{{ row.error }}</p>
+      {% endif %}
+      {% if row.groups.len() == 0 && !row.has_compile_output && row.error.len() == 0 %}
+      <p class="muted">暂无测试点详情。</p>
+      {% endif %}
+    </div>
+  </details>
+  {% else %}
+  <div class="sub-item sub-static">
+    <div class="sub-head">
+      <span class="sub-time">{{ row.created_at_text }}</span>
+      <span class="sub-problem">题目 {{ row.problem_key }}</span>
+      <span class="sub-status">{{ row.status_label }}</span>
+    </div>
+  </div>
+  {% endif %}
+  {% endfor %}
+</div>
+{% endif %}

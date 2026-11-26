@@ -1,0 +1,15 @@
+{
+    "title": "示例比赛",
+    "durationMinutes": 60,
+    "leaderboardVisible": false,
+    "problems": [
+        {
+            "key": "A",
+            "dir": "problems/A"
+        },
+        {
+            "key": "B",
+            "dir": "problems/B"
+        }
+    ]
+}

@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}MatrOJ 局域网比赛系统{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  {% block head %}{% endblock %}
+  {% block mathjax %}{% endblock %}
+</head>
+<body>
+  <header class="site-header">{% block header_extra %}{% endblock %}</header>
+  <main class="site-main">
+    {% block content %}{% endblock %}
+  </main>
+  <script src="/static/app.js" defer></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
