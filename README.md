@@ -87,12 +87,13 @@ README.txt                # 面向教师的使用说明
 
 ```text
 contests/<比赛ID>/
-├─ contest.json
+├─ contest.json          # 只写比赛信息，题目由 problems/ 子目录决定
 ├─ students.csv
 └─ problems/A/
    ├─ problem.json
    ├─ statement.md
    ├─ images/...
+   ├─ checker.cpp          # 可选，启用 SPJ 时才有
    └─ testdata/1.in 1.out 2.in 2.out ...
 ```
 
@@ -104,22 +105,79 @@ contests/<比赛ID>/
   `student_id` 和 `password` 用 Excel 编辑时请把该列设为文本格式，否则前导零会被吃掉。
   名单里有重名不影响登录——账号唯一即可。
 - 比赛 ID：`A-Za-z0-9` 开头，其后 `A-Za-z0-9._-`。
+- 题目一律扫描 `problems/` 下的一级子目录，目录名就是题号（只允许 1～16 位 ASCII
+  字母或数字，按自然顺序加载）；每个子目录都必须合规，否则整份比赛包校验失败、程序退出。
+  `contest.json` 里不需要写题目；旧包里残留的 `problems` 字段会被忽略，不影响扫描。
 - 测试点按 basename 自然排序；每个 `.in` 必须有同名 `.out`。
 - 题面只识别 `$...$` / `$$...$$` 公式；代码块内 `$` 不抽取。
-- 非法比赛包只在教师端列出原因，学生端不展示。
+- **比赛包、题目、名单或配置有任何校验错误，程序直接退出**，在控制台逐条打印原因，
+  不会带病启动、也不会把比赛标成 invalid 后继续开服务。
+- 单个 `.in` / `.out` 不得超过 128 MiB（testlib 自身也有文件大小上限）。
+
+### SPJ（special judge）
+
+要在题目目录放 `checker.cpp`，并在 `problem.json` 里声明：
+
+```json
+{
+  "title": "圆的面积",
+  "timeLimitMs": 1000,
+  "memoryLimitMb": 256,
+  "fullScore": 100,
+  "checker": { "enabled": true, "timeLimitMs": 5000, "memoryLimitMb": 512 }
+}
+```
+
+- `checker.cpp` 与 `problem.json` 同级，**必须是单文件**（题目目录不进 include 路径）。
+- `checker` 段的三个字段**都是必填、没有默认值**：`enabled`、`timeLimitMs`、`memoryLimitMb`。
+  缺任何一项、或字段名拼错，加载比赛包时直接报错——启用 SPJ 是要教师明确表态的事，
+  漏写 `enabled` 就静默按字符串比对（成绩看着正常其实是错的）比报错糟糕得多。
+- `"enabled": false` 表示不启用，此时即使有 `checker.cpp` 也忽略；用于现场临时关掉坏 checker。
+- 没有 `checker` 段时，目录里残留的 `checker.cpp` 一律忽略，不报错。
+- 可直接 `#include "testlib.h"`：发布包在 `include/testlib.h` 提供 0.9.52，不要自己复制到题目目录（不会被使用）。
+- 也可以写不依赖 testlib 的纯 C++ checker，用同一命令行协议。
+- `.out` 仍然必填并作为第三个参数传入；SPJ 题的 `.out` 可以是标准答案，也可以是任意内容。
+
+checker 协议与判定：
+
+```text
+checker.exe <输入> <选手输出> <标准答案>
+退出码 0 通过；1/2/4 判错；3 表示题目或数据有问题；5 与 ≥16 表示用了部分分（不支持）
+```
+
+- checker 运行时出问题（exit 3、exit 5/≥16、超时、崩溃）时，整份提交记「判题失败」，不扣学生分，可全部重测。
+- checker 写到的 stderr 诊断会显示在管理端的测试点行里；学生端只能看到 AC/WA。
+- **程序启动时只预编译全部 checker**：任何一道题编译失败，程序都不启动，控制台打印具体编译错误。
+  临时绕开可把该题的 `enabled` 改成 `false`。
+- checker 的判题逻辑正确性由教师负责，启动阶段不做自检；请教师自行验证 checker 是否符合题目判定要求。
+- 编译产物在 `data/checkers/<比赛ID>/<题号>.exe`，每次启动重建；与 `data/<比赛ID>/` 分开，重置比赛不受影响。
+  编译直接用题目目录的绝对路径，产物目录里只留 `.exe`，不会留下 `checker.cpp`。
 
 ## 判题与数据
 
-- 每场比赛一个 SQLite：`data/<比赛ID>/contest.db`；源码永久保存，临时编译目录结束后清理。
+- 每场比赛一个 SQLite：`data/<比赛ID>/contest.db`；临时编译目录结束后清理。
+- 源码永久保存，按「账号 → 题号 → 第几次提交」分目录：
+
+  ```
+  data/<比赛ID>/submissions/<账号>/<题号>/1.cpp 2.cpp ...
+  ```
+
+  账号里的 Windows 非法字符会被替换成 `_`，并追加一小段哈希，避免两个不同账号挤进同一目录。
+  大小写不同的账号（`abc` / `ABC`）会落到同一个目录，名单校验阶段直接报错。
+- `data/<比赛ID>/judge.log` 记录每个提交的全过程：收到（学生/题目/第几次/字节数）、
+  开始评测（测试点数、时限、是否 SPJ）、编译结果与耗时、每个测试点的判定与耗时内存、
+  checker 的诊断、最终得分与总耗时；判题失败会带上具体原因。
 - go-judge 只绑 `127.0.0.1`，随机端口 + 随机 Bearer token；启动失败即退出，运行中崩溃自动重启一次。
 - 编译超时 10 秒；Job Object 限制进程树；输出比对统一 CRLF→LF、去行尾空白、去末尾空行。
+- checker 编译超时 30 秒（`-O1`，testlib 头文件很重）；每个测试点在有 checker 时多一次 go-judge 运行。
+- SPJ 的选手输出经 go-judge 的 JSON 字符串回传后落盘，非 UTF-8 字节会被替换；C++ 题目的文本输出不受影响。
 - 榜单按每题最高分求和；总分相同按达成时间早者优先，再按账号。
 - 备份：停止程序后复制 `data/<比赛ID>/`。
 - 重置：管理端比赛详情页执行，删除该场提交与成绩，保留比赛包。
 
 ## 维护命令
 
-- `cargo xtask package`：构建 release、校验 go-judge、生成发布目录与 zip（不含 g++）。
+- `cargo xtask package`：构建 release、校验 go-judge 与 testlib、生成发布目录与 zip（不含 g++）。
 - `cargo xtask acceptance`：对发布包执行管理员/学生/真判题/隐藏/榜单/导出/重置验收。
 - `cargo xtask acceptance --no-reset`：保留验收数据，便于重启持久化彩排。
 - 压测：`$env:LABJUDGE_LOADTEST='1'; cargo test --test load_smoke -- --ignored --nocapture`
@@ -150,11 +208,15 @@ $env:LABJUDGE_REAL_JUDGE='1'; cargo test --test live_judge -- --ignored --nocapt
 - 同一账号只保留一个活动会话；比赛中重新登录会顶掉旧会话。比赛结束后学生会话失效，学生端完全关闭。
 - 题面资源只允许 png/jpg/jpeg/gif/webp，canonicalize 后校验目录前缀。
 - 模板与 `app.js`/`app.css` 不加载外部 CDN；运行时无外部网络请求。
-- 双开由 `data/.lock` 阻止。
+- 双开由 `data/labjudge.lock` 阻止（运行期间独占；程序退出后可删，文件只用来加锁）。
 - **安全边界**：本工具面向受控教室，默认信任学生。Windows 版不提供代码沙箱；学生代码在教师机运行，可能读取教师机文件或联网；学生端的编译输出过滤只影响显示，不是隔离。只在教师可监督、学生可信的教室使用；高利害或不可信环境请改用带沙箱的 Linux 判题环境。
 
 ## 第三方版本与许可证
 
+- testlib 0.9.52（MIT）
+  - 来源：`https://github.com/MikeMirzayanov/testlib`，commit `93214ef6a94e3669f6a8ec452754169775eb5b07`
+  - 固定文件：`vendor/testlib/testlib.h`；发布包放在 `include/testlib.h`
+  - SHA256：`70683174e7e4d99a5ee46d47aa4fa2d12fc85631443181a12a2e5023152397f0`
 - go-judge v1.14.1（MIT）
   - 下载：`https://github.com/criyle/go-judge/releases/download/v1.14.1/go-judge_1.14.1_windows_amd64.exe`
   - 固定文件：`vendor/go-judge/go-judge.exe`（许可证 `vendor/go-judge/LICENSE`）

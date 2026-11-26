@@ -43,8 +43,10 @@ impl JudgeEngine for DelayEngine {
                 memory_kb: 1024,
                 score: 100,
                 max_score: 100,
+                message: None,
             }],
             compile_output: None,
+            compile_ms: 10,
             error: None,
         }
     }
@@ -62,7 +64,7 @@ impl LoadApp {
         let contest = root.path().join("contests/demo");
         write(
             &contest.join("contest.json"),
-            r#"{"title":"压测赛","durationMinutes":60,"problems":[{"key":"A","dir":"problems/A"}]}"#,
+            r#"{"title":"压测赛","durationMinutes":60}"#,
         );
         let mut roster = String::from("name,student_id,password\n");
         for index in 1..=CLIENTS {

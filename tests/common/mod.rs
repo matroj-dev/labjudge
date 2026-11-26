@@ -33,13 +33,23 @@ pub struct TestApp {
 
 impl TestApp {
     pub fn new() -> Self {
+        Self::build(Config::for_test())
+    }
+
+    /// 默认配置有 5 秒提交冷却；需要连着提交同一题时用这个。
+    pub fn without_submit_cooldown() -> Self {
+        let mut config = Config::for_test();
+        config.submit_cooldown_seconds = 0;
+        Self::build(config)
+    }
+
+    fn build(config: Config) -> Self {
         let root = tempfile::tempdir().unwrap();
         let contests = root.path().join("contests");
         let demo = contests.join("demo");
         write(
             &demo.join("contest.json"),
-            r#"{"title":"M2 测试赛","durationMinutes":60,"leaderboardVisible":false,
-                "problems":[{"key":"A","dir":"problems/A"},{"key":"B","dir":"problems/B"}]}"#,
+            r#"{"title":"M2 测试赛","durationMinutes":60,"leaderboardVisible":false}"#,
         );
         write(
             &demo.join("students.csv"),
@@ -78,8 +88,7 @@ impl TestApp {
 
         let registry = ContestRegistry::load(scan_contests(&contests), &root.path().join("data"));
         let paths = Arc::new(Paths::for_test(root.path().to_path_buf()));
-        let state =
-            AppState::new(Arc::new(Config::for_test()), paths, 0, Arc::new(registry)).unwrap();
+        let state = AppState::new(Arc::new(config), paths, 0, Arc::new(registry)).unwrap();
         let router = build_router(state.clone());
 
         Self {
@@ -241,6 +250,7 @@ impl TestApp {
                 created_at: now_ms(),
             })
             .unwrap()
+            .id
     }
 
     pub fn add_done_submission(

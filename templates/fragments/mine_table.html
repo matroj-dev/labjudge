@@ -24,7 +24,10 @@
             <tbody>
               {% for case in group.cases %}
               <tr>
-                <td>{{ case.name }}</td>
+                <td>
+                  {{ case.name }}
+                  {% if case.message.len() > 0 %}<span class="muted case-note">{{ case.message }}</span>{% endif %}
+                </td>
                 <td>{{ case.verdict }}</td>
                 <td>{{ case.time_ms }} ms</td>
                 <td>{{ case.memory_kb }} KB</td>

@@ -37,8 +37,10 @@ impl JudgeEngine for AcceptEngine {
                 memory_kb: 1024,
                 score: 100,
                 max_score: 100,
+                message: None,
             }],
             compile_output: None,
+            compile_ms: 10,
             error: None,
         }
     }

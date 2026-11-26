@@ -88,6 +88,7 @@ mod tests {
                 kind: SubtaskKind::Sum,
                 cases: vec!["1".to_string()],
             }],
+            checker: None,
         }
     }
 

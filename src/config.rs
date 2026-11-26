@@ -22,6 +22,8 @@ pub enum ConfigError {
     Io(#[from] std::io::Error),
     #[error("配置 JSON 非法: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("配置校验失败: {0}")]
+    Invalid(String),
 }
 
 impl Default for Config {
@@ -62,13 +64,48 @@ impl Config {
         let path = config_path(root);
         if path.exists() {
             let text = fs::read_to_string(&path)?;
-            let config = serde_json::from_str(&text)?;
+            let config: Self = serde_json::from_str(&text)?;
+            config.validate()?;
             return Ok((config, false));
         }
 
         let config = Self::generate();
+        config.validate()?;
         config.save(root)?;
         Ok((config, true))
+    }
+
+    /// 启动前校验：配置错了直接退出，不能带着非法参数开赛。
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        let invalid = |reason: String| ConfigError::Invalid(reason);
+        if self.port == 0 {
+            return Err(invalid("port 必须在 1～65535 之间".to_string()));
+        }
+        if !(1..=64).contains(&self.judge_concurrency) {
+            return Err(invalid("judgeConcurrency 必须在 1～64 之间".to_string()));
+        }
+        if self.submit_cooldown_seconds > 3600 {
+            return Err(invalid("submitCooldownSeconds 不能超过 3600".to_string()));
+        }
+        if !(1024..=4 * 1024 * 1024).contains(&self.max_source_bytes) {
+            return Err(invalid(
+                "maxSourceBytes 必须在 1024～4194304 之间".to_string(),
+            ));
+        }
+        if self.admin_password.trim().is_empty() {
+            return Err(invalid("adminPassword 不能为空".to_string()));
+        }
+        if self.session_secret.len() != 64
+            || !self
+                .session_secret
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(invalid(
+                "sessionSecret 必须是 64 位十六进制字符串".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     pub fn save(&self, root: &Path) -> Result<(), ConfigError> {
@@ -177,6 +214,33 @@ mod tests {
             saved["adminPassword"],
             serde_json::json!(config.admin_password)
         );
+    }
+
+    #[test]
+    fn invalid_values_are_rejected_on_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = Config::for_test();
+        config.judge_concurrency = 0;
+        fs::write(
+            config_path(dir.path()),
+            serde_json::to_string(&config).unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            Config::load_or_create(dir.path()),
+            Err(ConfigError::Invalid(_))
+        ));
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = Config::for_test();
+        config.session_secret = "xyz".to_string();
+        fs::write(
+            config_path(dir.path()),
+            serde_json::to_string(&config).unwrap(),
+        )
+        .unwrap();
+        let error = Config::load_or_create(dir.path()).unwrap_err();
+        assert!(error.to_string().contains("sessionSecret"));
     }
 
     #[test]

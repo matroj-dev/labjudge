@@ -10,13 +10,6 @@ pub struct ContestJson {
     pub duration_minutes: u32,
     #[serde(default)]
     pub leaderboard_visible: bool,
-    pub problems: Vec<ProblemRefJson>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct ProblemRefJson {
-    pub key: String,
-    pub dir: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -29,6 +22,23 @@ pub struct ProblemJson {
     pub full_score: Option<i32>,
     #[serde(default)]
     pub subtasks: Option<Vec<SubtaskJson>>,
+    #[serde(default)]
+    pub checker: Option<CheckerJson>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CheckerJson {
+    pub enabled: bool,
+    pub time_limit_ms: u32,
+    pub memory_limit_mb: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Checker {
+    pub source: PathBuf,
+    pub time_limit_ms: u32,
+    pub memory_limit_mb: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -74,6 +84,7 @@ pub struct ProblemDraft {
     pub root: PathBuf,
     pub statement_path: PathBuf,
     pub test_cases: Vec<TestCase>,
+    pub checker: Option<Checker>,
 }
 
 #[derive(Debug, Clone)]
@@ -103,6 +114,7 @@ pub struct ValidatedProblem {
     pub statement_path: PathBuf,
     pub test_cases: Vec<TestCase>,
     pub subtasks: Vec<ValidatedSubtask>,
+    pub checker: Option<Checker>,
 }
 
 #[derive(Debug, Error)]
@@ -115,8 +127,28 @@ pub struct PackageError {
 impl PackageError {
     pub fn new(path: impl Into<PathBuf>, reason: impl Into<String>) -> Self {
         Self {
-            path: path.into(),
+            path: normalize_display_path(path.into()),
             reason: reason.into(),
         }
+    }
+}
+
+fn normalize_display_path(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(plain) => PathBuf::from(plain),
+        None => path,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn package_error_hides_windows_verbatim_prefix() {
+        let error = super::PackageError::new(r"\\?\C:/contests/demo/contest.json", "字段非法");
+        assert_eq!(
+            error.to_string(),
+            r"C:/contests/demo/contest.json: 字段非法"
+        );
     }
 }

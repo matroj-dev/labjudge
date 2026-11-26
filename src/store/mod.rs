@@ -13,7 +13,9 @@ pub mod sessions;
 pub mod submissions;
 
 pub use participants::ParticipantRow;
-pub use submissions::{NewSubmission, StatusCounts, SubmissionResult, SubmissionRow};
+pub use submissions::{
+    InsertedSubmission, NewSubmission, StatusCounts, SubmissionResult, SubmissionRow,
+};
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -91,6 +93,16 @@ impl ContestStore {
             .open(path)?;
         writeln!(file, "{line}")?;
         Ok(())
+    }
+
+    pub fn log(&self, message: &str) {
+        let line = format!(
+            "{} {message}",
+            crate::timefmt::format_local(crate::timefmt::now_ms())
+        );
+        if let Err(error) = self.append_log(&line) {
+            tracing::error!(contest = %self.contest_id, %error, "写 judge.log 失败");
+        }
     }
 
     pub(crate) fn connection(&self) -> Result<MutexGuard<'_, Connection>, StoreError> {

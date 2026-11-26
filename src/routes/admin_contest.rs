@@ -15,7 +15,7 @@ use super::error::AppError;
 use crate::app_state::AppState;
 use crate::contest::lifecycle::{apply_end, apply_extend, apply_start, phase};
 use crate::model::Phase;
-use crate::services::registry::{load_contest_package, ContestRuntime};
+use crate::services::registry::{load_contest_package, ContestPackage, ContestRuntime};
 use crate::store::ContestStore;
 use crate::timefmt::{format_local, now_ms};
 
@@ -269,6 +269,31 @@ async fn reset(
     Ok(Redirect::to(&format!("/admin/c/{contest_id}")).into_response())
 }
 
+/// 重新加载题包时也要重编 checker：加载阶段就是唯一的编译时机。
+/// 失败时不替换现有 runtime，把错误原样回显到管理页。
+async fn prepare_checkers(state: &AppState, package: &ContestPackage) -> Result<(), AppError> {
+    if !package
+        .problems
+        .iter()
+        .any(|problem| problem.checker.is_some())
+    {
+        return Ok(());
+    }
+    let compiler = state
+        .compiler
+        .as_ref()
+        .ok_or_else(|| AppError::internal("编译器未就绪"))?;
+    crate::judge::prepare_contest(
+        package,
+        compiler.as_ref(),
+        &state.paths.testlib,
+        &state.paths.checkers_dir(),
+    )
+    .await
+    .map_err(|error| AppError::bad_request(format!("checker 编译失败: {error}")))?;
+    Ok(())
+}
+
 async fn reload(
     State(state): State<AppState>,
     Path(contest_id): Path<String>,
@@ -290,6 +315,7 @@ async fn reload(
     }
     let package = load_contest_package(&runtime.package.dir, &contest_id)
         .map_err(|error| AppError::bad_request(format!("题包/名单校验失败: {error}")))?;
+    prepare_checkers(&state, &package).await?;
     runtime
         .store
         .clear_participants()

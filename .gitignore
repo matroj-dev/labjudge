@@ -16,6 +16,9 @@
 !/vendor/go-judge/
 !/vendor/go-judge/go-judge.exe
 !/vendor/go-judge/LICENSE
+!/vendor/testlib/
+!/vendor/testlib/README.md
+!/vendor/testlib/testlib.h
 
 # Agent workspace state
 /.workbuddy/

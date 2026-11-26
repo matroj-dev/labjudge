@@ -58,6 +58,7 @@ impl Roster {
 
         let mut students = Vec::new();
         let mut seen_ids = HashSet::new();
+        let mut seen_folded_ids = HashSet::new();
         for (row, record) in reader.records().enumerate() {
             let record = record.map_err(|error| {
                 PackageError::new(path, format!("第 {} 行解析失败: {error}", row + 2))
@@ -84,6 +85,12 @@ impl Roster {
 
             if !seen_ids.insert(student_id.clone()) {
                 return Err(PackageError::new(path, format!("ID 重复: {student_id}")));
+            }
+            if !seen_folded_ids.insert(student_id.to_lowercase()) {
+                return Err(PackageError::new(
+                    path,
+                    format!("ID 只有大小写不同: {student_id}（文件系统不区分大小写）"),
+                ));
             }
 
             students.push(Student {
@@ -251,6 +258,19 @@ mod tests {
         );
         let error = Roster::load(&path).unwrap_err().to_string();
         assert!(error.contains("ID 重复"));
+    }
+
+    #[test]
+    fn rejects_ids_that_differ_only_in_case() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("students.csv");
+        // 两个账号会落到同一个提交目录（Windows 文件名不区分大小写）。
+        write(
+            &path,
+            "name,student_id,password\n张三,abc,p1\n李四,ABC,p2\n",
+        );
+        let error = Roster::load(&path).unwrap_err().to_string();
+        assert!(error.contains("大小写"));
     }
 
     #[test]

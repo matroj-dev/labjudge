@@ -43,6 +43,15 @@ pub struct SubmissionResult<'a> {
     pub judged_at: i64,
 }
 
+/// 新提交落库后的两个编号：
+/// - `id`：数据库主键，只在程序内部与 URL 里用；
+/// - `seq`：这个学生这道题的第几次提交，用来给源码文件命名（`1.cpp`、`2.cpp`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InsertedSubmission {
+    pub id: i64,
+    pub seq: i64,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct StatusCounts {
     pub queued: usize,
@@ -56,8 +65,18 @@ const SELECT_COLUMNS: &str = "id, contest_id, student_id, problem_key, language,
     status, verdict, score, cases_json, compile_output, error, created_at, judged_at";
 
 impl ContestStore {
-    pub fn insert_submission(&self, new: &NewSubmission) -> Result<i64, StoreError> {
+    /// 插入一条排队中的提交。
+    ///
+    /// `seq` 在同一次加锁内算出来（`COUNT(*) + 1`），因此同一个学生同一道题并发提交
+    /// 也不会拿到同一个序号、写到同一个源码文件。
+    pub fn insert_submission(&self, new: &NewSubmission) -> Result<InsertedSubmission, StoreError> {
         let conn = self.connection()?;
+        let seq: i64 = conn.query_row(
+            "SELECT COUNT(*) + 1 FROM submissions
+             WHERE contest_id = ?1 AND student_id = ?2 AND problem_key = ?3",
+            params![self.contest_id(), new.student_id, new.problem_key],
+            |row| row.get(0),
+        )?;
         conn.execute(
             "INSERT INTO submissions
              (contest_id, student_id, problem_key, language, source_path,
@@ -72,7 +91,10 @@ impl ContestStore {
                 new.created_at,
             ],
         )?;
-        Ok(conn.last_insert_rowid())
+        Ok(InsertedSubmission {
+            id: conn.last_insert_rowid(),
+            seq,
+        })
     }
 
     pub fn submission(&self, id: i64) -> Result<Option<SubmissionRow>, StoreError> {
@@ -338,7 +360,8 @@ mod tests {
         let store = ContestStore::open(dir.path(), "c", false).unwrap();
         let id = store
             .insert_submission(&new_submission("s1", "A", 100))
-            .unwrap();
+            .unwrap()
+            .id;
 
         let row = store.submission(id).unwrap().unwrap();
         assert_eq!(row.status, SubmissionStatus::Queued);
@@ -356,7 +379,8 @@ mod tests {
         let store = ContestStore::open(dir.path(), "c", false).unwrap();
         let id = store
             .insert_submission(&new_submission("s1", "A", 100))
-            .unwrap();
+            .unwrap()
+            .id;
 
         store
             .set_result(
@@ -396,13 +420,16 @@ mod tests {
         let store = ContestStore::open(dir.path(), "c", false).unwrap();
         let a = store
             .insert_submission(&new_submission("s1", "A", 100))
-            .unwrap();
+            .unwrap()
+            .id;
         let b = store
             .insert_submission(&new_submission("s1", "B", 200))
-            .unwrap();
+            .unwrap()
+            .id;
         let c = store
             .insert_submission(&new_submission("s1", "C", 300))
-            .unwrap();
+            .unwrap()
+            .id;
         store.set_status(a, SubmissionStatus::Compiling).unwrap();
         store.set_status(b, SubmissionStatus::Running).unwrap();
         store.set_status(c, SubmissionStatus::Done).unwrap();
@@ -422,7 +449,8 @@ mod tests {
         let store = ContestStore::open(dir.path(), "c", false).unwrap();
         let id = store
             .insert_submission(&new_submission("s1", "A", 100))
-            .unwrap();
+            .unwrap()
+            .id;
 
         store.mark_failed(id, "源码缺失", 200).unwrap();
         let row = store.submission(id).unwrap().unwrap();
@@ -441,6 +469,25 @@ mod tests {
         assert!(store.delete_submission(id).unwrap());
         assert!(store.submission(id).unwrap().is_none());
         assert!(!store.delete_submission(id).unwrap());
+    }
+
+    #[test]
+    fn seq_counts_per_student_and_problem() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContestStore::open(dir.path(), "c", false).unwrap();
+        let seq = |student: &str, problem: &str, at: i64| {
+            store
+                .insert_submission(&new_submission(student, problem, at))
+                .unwrap()
+                .seq
+        };
+
+        assert_eq!(seq("s1", "A", 100), 1);
+        assert_eq!(seq("s1", "A", 200), 2);
+        assert_eq!(seq("s1", "B", 300), 1);
+        assert_eq!(seq("s2", "A", 400), 1);
+        // 删掉一条之后序号会重复，但对应的源码文件此前已被删除，不会互相覆盖。
+        assert_eq!(seq("s2", "A", 500), 2);
     }
 
     #[test]

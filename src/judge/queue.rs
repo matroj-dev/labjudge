@@ -5,11 +5,12 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex as AsyncMutex;
 
-use super::{JudgeEngine, JudgeOutcomeStatus, JudgeTask};
-use crate::model::SubmissionStatus;
+use super::{JudgeEngine, JudgeOutcome, JudgeOutcomeStatus, JudgeTask};
+use crate::model::{SubmissionStatus, Verdict};
+use crate::scoring::ScoredCase;
 use crate::services::registry::{ContestRegistry, ContestRuntime};
 use crate::store::SubmissionResult;
-use crate::timefmt::{format_local, now_ms};
+use crate::timefmt::now_ms;
 
 #[derive(Debug, Clone)]
 pub struct JudgeJob {
@@ -102,11 +103,23 @@ fn recover_jobs(registry: &ContestRegistry, handle: &JudgeQueueHandle) {
             if !row.source_path.is_file() {
                 let message = "源码文件缺失，无法恢复评测";
                 let _ = runtime.store.mark_failed(row.id, message, now_ms());
-                log_line(&runtime, &format!("提交 {} 恢复失败: {message}", row.id));
+                log_line(
+                    &runtime,
+                    &format!(
+                        "提交 {} 恢复失败：学生 {}，题目 {}，{message}",
+                        row.id, row.student_id, row.problem_key
+                    ),
+                );
                 continue;
             }
             if handle.enqueue(runtime.package.id.clone(), row.id) {
-                log_line(&runtime, &format!("提交 {} 重新入队", row.id));
+                log_line(
+                    &runtime,
+                    &format!(
+                        "提交 {} 重新入队：学生 {}，题目 {}",
+                        row.id, row.student_id, row.problem_key
+                    ),
+                );
             }
         }
     }
@@ -141,7 +154,13 @@ async fn process_job(
             .store
             .mark_failed(row.id, &message, now_ms())
             .map_err(|error| error.to_string())?;
-        log_line(&runtime, &format!("提交 {} 失败: {message}", row.id));
+        log_line(
+            &runtime,
+            &format!(
+                "提交 {} 判题失败：学生 {}，{message}",
+                row.id, row.student_id
+            ),
+        );
         return Ok(());
     };
     if !row.source_path.is_file() {
@@ -150,7 +169,16 @@ async fn process_job(
             .store
             .mark_failed(row.id, message, now_ms())
             .map_err(|error| error.to_string())?;
-        log_line(&runtime, &format!("提交 {} 失败: {message}", row.id));
+        log_line(
+            &runtime,
+            &format!(
+                "提交 {} 判题失败：学生 {}，题目 {}，{message}（{}）",
+                row.id,
+                row.student_id,
+                row.problem_key,
+                row.source_path.display()
+            ),
+        );
         return Ok(());
     }
 
@@ -158,7 +186,24 @@ async fn process_job(
         .store
         .set_status(row.id, SubmissionStatus::Running)
         .map_err(|error| error.to_string())?;
-    log_line(&runtime, &format!("提交 {} 开始评测", row.id));
+    let started_at = now_ms();
+    log_line(
+        &runtime,
+        &format!(
+            "提交 {} 开始评测：学生 {}，题目 {}，{} 个测试点，时限 {} ms / {} MiB{}",
+            row.id,
+            row.student_id,
+            row.problem_key,
+            problem.test_cases.len(),
+            problem.time_limit_ms,
+            problem.memory_limit_mb,
+            if problem.checker.is_some() {
+                "，使用 SPJ"
+            } else {
+                ""
+            }
+        ),
+    );
 
     let work_dir = runtime
         .store
@@ -175,10 +220,36 @@ async fn process_job(
     };
     let outcome = engine.judge(task).await;
     let judged_at = now_ms();
+    let elapsed_ms = judged_at.saturating_sub(started_at).max(0) as u64;
     let cases_json = serde_json::to_string(&outcome.cases).ok();
 
     match outcome.status {
         JudgeOutcomeStatus::Done => {
+            log_compile(&runtime, row.id, &outcome);
+            for case in &outcome.cases {
+                log_case(&runtime, row.id, case);
+            }
+            let passed = outcome
+                .cases
+                .iter()
+                .filter(|case| case.verdict == Verdict::Ac)
+                .count();
+            let total = outcome.cases.len();
+            let cases_part = if total == 0 {
+                String::new()
+            } else {
+                format!("，通过 {passed}/{total} 个测试点")
+            };
+            log_line(
+                &runtime,
+                &format!(
+                    "提交 {} 完成：{}，{} 分{cases_part}，总耗时 {elapsed_ms} ms",
+                    row.id,
+                    outcome.verdict.as_str(),
+                    outcome.score
+                ),
+            );
+
             runtime
                 .store
                 .set_result(
@@ -193,15 +264,6 @@ async fn process_job(
                     },
                 )
                 .map_err(|error| error.to_string())?;
-            log_line(
-                &runtime,
-                &format!(
-                    "提交 {} 完成: {} {} 分",
-                    row.id,
-                    outcome.verdict.as_str(),
-                    outcome.score
-                ),
-            );
         }
         JudgeOutcomeStatus::Failed => {
             let message = outcome.error.unwrap_or_else(|| "评测内部错误".to_string());
@@ -209,7 +271,13 @@ async fn process_job(
                 .store
                 .mark_failed(row.id, &message, judged_at)
                 .map_err(|error| error.to_string())?;
-            log_line(&runtime, &format!("提交 {} 失败: {message}", row.id));
+            log_line(
+                &runtime,
+                &format!(
+                    "提交 {} 判题失败：学生 {}，题目 {}，耗时 {elapsed_ms} ms，{message}",
+                    row.id, row.student_id, row.problem_key
+                ),
+            );
         }
     }
 
@@ -217,8 +285,59 @@ async fn process_job(
 }
 
 fn log_line(runtime: &Arc<ContestRuntime>, message: &str) {
-    let line = format!("{} {message}", format_local(now_ms()));
-    if let Err(error) = runtime.store.append_log(&line) {
-        tracing::error!(contest = %runtime.package.id, %error, "写 judge.log 失败");
+    runtime.store.log(message);
+}
+
+/// 编译结果只记一行；CE 带上第一条错误，避免把满屏 g++ 输出塞进日志。
+fn log_compile(runtime: &Arc<ContestRuntime>, id: i64, outcome: &JudgeOutcome) {
+    if outcome.verdict == Verdict::Ce {
+        let first = outcome
+            .compile_output
+            .as_deref()
+            .and_then(|output| output.lines().find(|line| !line.trim().is_empty()))
+            .map(shorten)
+            .unwrap_or_default();
+        let detail = if first.is_empty() {
+            String::new()
+        } else {
+            format!("，{first}")
+        };
+        log_line(
+            runtime,
+            &format!("提交 {id} 编译失败：耗时 {} ms{detail}", outcome.compile_ms),
+        );
+    } else {
+        log_line(
+            runtime,
+            &format!("提交 {id} 编译成功：耗时 {} ms", outcome.compile_ms),
+        );
     }
+}
+
+fn log_case(runtime: &Arc<ContestRuntime>, id: i64, case: &ScoredCase) {
+    let mut line = format!(
+        "提交 {id} 测试点 {}：{}，{} ms，{} KiB，{}/{} 分",
+        case.name,
+        case.verdict.as_str(),
+        case.time_ms,
+        case.memory_kb,
+        case.score,
+        case.max_score
+    );
+    if let Some(message) = case.message.as_deref().map(shorten) {
+        if !message.is_empty() {
+            line.push_str(&format!("，checker：{message}"));
+        }
+    }
+    log_line(runtime, &line);
+}
+
+/// 压成一行并截断：checker 的 stderr 可能是多行、也可能很长。
+fn shorten(text: &str) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut out: String = flat.chars().take(200).collect();
+    if flat.chars().count() > 200 {
+        out.push('…');
+    }
+    out
 }

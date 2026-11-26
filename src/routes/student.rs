@@ -25,6 +25,7 @@ use crate::contest::lifecycle::phase;
 use crate::contest::validate::is_valid_contest_id;
 use crate::markdown::{render_statement, StatementCtx};
 use crate::model::Phase;
+use crate::paths;
 use crate::services::registry::ContestRuntime;
 use crate::store::NewSubmission;
 use crate::timefmt::{format_local, now_ms};
@@ -462,7 +463,7 @@ async fn submit(
         ));
     };
 
-    let id = runtime
+    let inserted = runtime
         .store
         .insert_submission(&NewSubmission {
             student_id: session.student_id.clone(),
@@ -472,12 +473,22 @@ async fn submit(
             created_at: now,
         })
         .map_err(|error| AppError::internal(format!("记录提交失败: {error}")))?;
+    let id = inserted.id;
 
-    let submissions_dir = runtime.store.data_dir().join("submissions");
-    let final_path = submissions_dir.join(format!("{id}.cpp"));
-    let temp_path = submissions_dir.join(format!(".tmp-{id}.cpp"));
+    // 源码按「账号/题号/第几次提交」落盘。
+    let final_path = paths::submission_source_path(
+        runtime.store.data_dir(),
+        &session.student_id,
+        &form.problem_key,
+        inserted.seq,
+    );
+    let final_dir = final_path
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| runtime.store.data_dir().to_path_buf());
+    let temp_path = final_dir.join(format!(".tmp-{}.cpp", inserted.seq));
     let write_result = (|| -> std::io::Result<()> {
-        fs::create_dir_all(&submissions_dir)?;
+        fs::create_dir_all(&final_dir)?;
         fs::write(&temp_path, source_bytes)?;
         fs::rename(&temp_path, &final_path)?;
         Ok(())
@@ -494,6 +505,13 @@ async fn submit(
         runtime.store.delete_submission(id).ok();
         return Err(AppError::internal(format!("更新提交路径失败: {error}")));
     }
+    runtime.store.log(&format!(
+        "提交 {id} 收到：学生 {}，题目 {}，第 {} 次提交，源码 {} 字节",
+        session.student_id,
+        form.problem_key,
+        inserted.seq,
+        source_bytes.len()
+    ));
 
     if !queue.enqueue(contest_id.clone(), id) {
         runtime

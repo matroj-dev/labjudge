@@ -11,6 +11,7 @@ use super::CompilerBackend;
 use crate::win::run_limited;
 
 const COMPILE_TIMEOUT: Duration = Duration::from_secs(10);
+const CHECKER_COMPILE_TIMEOUT: Duration = Duration::from_secs(30);
 const COMPILE_MEMORY_LIMIT: u64 = 1024 * 1024 * 1024;
 const COMPILE_OUTPUT_LIMIT: usize = 8 * 1024;
 
@@ -79,28 +80,73 @@ impl Compiler {
             .arg("main.cpp");
 
         let output = run_limited(&mut command, COMPILE_TIMEOUT, Some(COMPILE_MEMORY_LIMIT))?;
-        if output.timed_out {
-            return Ok(CompileOutcome::Ce {
-                output: "编译超时（10 秒）".to_string(),
-            });
-        }
+        Ok(compile_result(output, &output_path, "编译超时（10 秒）"))
+    }
 
-        let succeeded = output
-            .status
-            .map(|status| status.success())
-            .unwrap_or(false);
-        if succeeded && output_path.is_file() {
-            return Ok(CompileOutcome::Success(output_path));
-        }
+    /// 编译 checker：固定单文件 `checker.cpp`，只把 testlib 目录加进 include 路径。
+    pub fn compile_checker(
+        &self,
+        source: &Path,
+        work_dir: &Path,
+        out_name: &str,
+        include_dir: &Path,
+    ) -> Result<CompileOutcome, CompileError> {
+        fs::create_dir_all(work_dir)?;
+        // 用绝对路径，避免相对路径被 current_dir(work_dir) 改写。
+        let source = fs::canonicalize(source)?;
+        let output_path = work_dir.join(out_name);
+        let _ = fs::remove_file(&output_path);
 
-        let raw = if output.stderr.is_empty() {
-            &output.stdout
-        } else {
-            &output.stderr
+        // 直接把题目目录里的绝对路径交给 g++，不往产物目录复制源码。
+        let mut command = Command::new(&self.path);
+        command
+            .current_dir(work_dir)
+            .arg("-std=c++17")
+            .arg("-O1")
+            .arg("-pipe")
+            .arg("-static")
+            .arg("-static-libgcc")
+            .arg("-static-libstdc++")
+            .arg("-I")
+            .arg(gpp_path(include_dir))
+            .arg("-o")
+            .arg(out_name)
+            .arg(gpp_path(&source));
+
+        let output = run_limited(
+            &mut command,
+            CHECKER_COMPILE_TIMEOUT,
+            Some(COMPILE_MEMORY_LIMIT),
+        )?;
+        Ok(compile_result(output, &output_path, "编译超时（30 秒）"))
+    }
+}
+
+/// 把一次编译进程的结果折算成「成功」或「带诊断的 CE」。
+fn compile_result(
+    output: crate::win::LimitedOutput,
+    output_path: &Path,
+    timeout_note: &str,
+) -> CompileOutcome {
+    if output.timed_out {
+        return CompileOutcome::Ce {
+            output: timeout_note.to_string(),
         };
-        Ok(CompileOutcome::Ce {
-            output: truncate_output(raw),
-        })
+    }
+    let succeeded = output
+        .status
+        .map(|status| status.success())
+        .unwrap_or(false);
+    if succeeded && output_path.is_file() {
+        return CompileOutcome::Success(output_path.to_path_buf());
+    }
+    let raw = if output.stderr.is_empty() {
+        &output.stdout
+    } else {
+        &output.stderr
+    };
+    CompileOutcome::Ce {
+        output: truncate_output(raw),
     }
 }
 
@@ -152,6 +198,14 @@ impl CompilerBackend for Compiler {
     ) -> Result<CompileOutcome, CompileError> {
         self.compile(source, work_dir)
     }
+}
+
+/// Windows 的 `canonicalize` 会返回 `\\?\C:\...`，MinGW g++ 不认这种形式；
+/// 去掉前缀并换成正斜杠，路径里的空格仍作为单个参数传递。
+fn gpp_path(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    let text = text.strip_prefix(r"\\?\").unwrap_or(&text);
+    text.replace('\\', "/")
 }
 
 fn truncate_output(bytes: &[u8]) -> String {
@@ -214,6 +268,38 @@ mod tests {
             CompileOutcome::Ce { output } => assert!(!output.is_empty()),
             CompileOutcome::Success(_) => panic!("expected CE"),
         }
+    }
+
+    #[test]
+    fn checker_compile_leaves_no_source_in_output_dir() {
+        let Some(compiler) = compiler() else {
+            return;
+        };
+        let root = tempfile::tempdir().unwrap();
+        let source_dir = root.path().join("problem");
+        let work_dir = root.path().join("checkers/contest");
+        fs::create_dir_all(&source_dir).unwrap();
+        let source = source_dir.join("checker.cpp");
+        fs::write(&source, "int main(){return 0;}\n").unwrap();
+
+        let outcome = compiler
+            .compile_checker(&source, &work_dir, "C.exe", &source_dir)
+            .unwrap();
+        match outcome {
+            CompileOutcome::Success(path) => assert!(path.is_file()),
+            CompileOutcome::Ce { output } => panic!("unexpected CE: {output}"),
+        }
+        assert!(!work_dir.join("checker.cpp").exists());
+        assert!(source.is_file(), "题目目录里的源文件不能被搬走");
+    }
+
+    #[test]
+    fn gpp_path_normalizes_windows_verbatim_paths() {
+        assert_eq!(
+            gpp_path(Path::new(r"\\?\C:\dir\checker.cpp")),
+            "C:/dir/checker.cpp"
+        );
+        assert_eq!(gpp_path(Path::new("include")), "include");
     }
 
     #[test]

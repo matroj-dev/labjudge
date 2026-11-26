@@ -12,6 +12,8 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 use crate::fsutil;
 
 const GO_JUDGE_SHA: &str = "021BD390DE60212C6875496BB4F1797A5D22693EF2459651856F1937D3309D3A";
+/// testlib 0.9.52，来源 MikeMirzayanov/testlib@93214ef6a94e3669f6a8ec452754169775eb5b07。
+const TESTLIB_SHA: &str = "70683174E7E4D99A5EE46D47AA4FA2D12FC85631443181A12A2E5023152397F0";
 const PROJECT_URL: &str = "https://github.com/matroj-dev/labjudge";
 
 const README_TXT: &str = r#"labjudge —— MatrOJ 局域网比赛系统
@@ -49,8 +51,26 @@ const README_TXT: &str = r#"labjudge —— MatrOJ 局域网比赛系统
 - 安全边界：本工具面向受控教室，默认信任学生。Windows 版不提供代码沙箱，
   学生代码在教师机运行，可能读取教师机文件或联网；学生端的编译输出过滤只影响显示，
   不是隔离。请只在教师可监督、学生可信的教室使用。
-- 示例比赛 sample-contest 已放在 contests\ 下，启动后即可看到。
+- 示例比赛 sample-contest 已放在 contests\ 下，启动后即可看到（C 题是 SPJ 示例）。
   正式比赛把比赛包目录放进 contests\ 后重启程序即可。
+- 题目一律扫描 problems\ 下的一级子目录，目录名即题号（1～16 位字母或数字），
+  子目录不合规则程序不启动；contest.json 里不需要写题目。
+- 比赛包、题目、名单或配置只要有一处校验不过，程序会直接在控制台打印全部原因并退出，
+  不会「带病启动」把比赛标成 invalid；请先修好再启动。
+
+SPJ（special judge）
+
+- 题目需要自定义判分时，在题目目录放一个 checker.cpp，并在 problem.json 里写：
+      "checker": { "enabled": true, "timeLimitMs": 5000, "memoryLimitMb": 512 }
+  三个字段都必填、没有默认值；漏写或拼错会在启动时报出具体字段并退出。
+- checker.cpp 必须是单文件，可以直接 #include "testlib.h"（头文件由本程序提供，
+  不要自己往题目目录复制一份，复制了也不会被使用）。
+- 不想用 SPJ 时把 enabled 改成 false（其余两项照抄），此时即使有 checker.cpp 也会忽略。
+- 程序启动时只自动编译所有 checker；任何一道题编译失败，程序都不会启动，
+  并打印具体错误——请在开赛前解决。checker 判题逻辑的正确性由教师负责，
+  程序不做自检。
+- checker 的退出码：0 通过，1/2/4 判错，3 表示题目或数据有问题（整份提交会显示
+  「判题失败」，不会记 0 分），5 或 16 以上表示用了部分分（本版本不支持）。
 
 目录
 
@@ -60,8 +80,13 @@ labjudge\
   config.json             配置（首次启动后生成）
   bin\labjudge.exe     主程序
   bin\go-judge.exe        判题器（不要删除或改名）
+  include\testlib.h       SPJ 检查器用的头文件（不要删除）
   contests\               比赛包
-  data\                   运行数据（首次启动后生成：数据库、源码、日志）
+  data\                   运行数据（首次启动后生成）
+    labjudge.lock         防止误开两份程序（退出后可删）
+    <比赛ID>\contest.db  提交与成绩
+    <比赛ID>\submissions\<账号>\<题号>\1.cpp 2.cpp ...   学生源码
+    <比赛ID>\judge.log   评测日志（每次提交全过程）
 
 数据与备份
 
@@ -78,6 +103,8 @@ labjudge\
   以及同一行的 password 列；密码区分大小写。
 - 8080 被占用：程序会自动顺延端口，以控制台打印的地址为准。
 - 程序被杀软拦截：把程序目录和 data\ 加入信任列表。
+- 启动时提示 checker 编译失败：按提示修好该题的 checker.cpp；想先跑起来，
+  把该题 problem.json 的 checker 的 enabled 改成 false 再启动。
 
 项目主页：{{project_url}}
 "#;
@@ -114,14 +141,16 @@ pub fn run() -> Result<()> {
     println!("[1/5] 正在构建主程序");
     build_release(&root)?;
 
-    println!("[2/5] 正在校验固定判题器");
+    println!("[2/5] 正在校验固定判题器与 testlib");
     let go_judge = root.join("vendor").join("go-judge").join("go-judge.exe");
     verify_sha(&go_judge, GO_JUDGE_SHA, "go-judge")?;
+    let testlib = root.join("vendor").join("testlib").join("testlib.h");
+    verify_sha(&testlib, TESTLIB_SHA, "testlib.h")?;
 
     println!("[3/5] 生成发布目录");
     let dist_root = root.join("dist");
     let staging = dist_root.join("labjudge.staging");
-    build_staging(&root, &staging, &go_judge)?;
+    build_staging(&root, &staging, &go_judge, &testlib)?;
 
     println!("[4/5] 正在打包");
     let zip = dist_root.join(format!("labjudge-{}.zip", Local::now().format("%Y%m%d")));
@@ -129,7 +158,7 @@ pub fn run() -> Result<()> {
 
     println!("[5/5] 正在切换生成文件");
     let dist = dist_root.join("labjudge");
-    swap_dist(&dist_root, &staging, &dist)?;
+    swap_dist(&staging, &dist)?;
 
     println!("[OK] {}", dist.display());
     println!("[OK] {}", zip.display());
@@ -164,9 +193,10 @@ fn verify_sha(path: &Path, expected: &str, label: &str) -> Result<()> {
     Ok(())
 }
 
-fn build_staging(root: &Path, staging: &Path, go_judge: &Path) -> Result<()> {
+fn build_staging(root: &Path, staging: &Path, go_judge: &Path, testlib: &Path) -> Result<()> {
     fsutil::remove_dir_if_exists(staging)?;
     fs::create_dir_all(staging.join("bin"))?;
+    fs::create_dir_all(staging.join("include"))?;
     fs::create_dir_all(staging.join("contests"))?;
 
     let exe = root.join("target").join("release").join("labjudge.exe");
@@ -175,6 +205,8 @@ fn build_staging(root: &Path, staging: &Path, go_judge: &Path) -> Result<()> {
     }
     fsutil::copy_file(&exe, &staging.join("bin").join("labjudge.exe"))?;
     fsutil::copy_file(go_judge, &staging.join("bin").join("go-judge.exe"))?;
+    // checker 编译时把这一级目录加进 -I，教师的 checker.cpp 直接 #include "testlib.h"。
+    fsutil::copy_file(testlib, &staging.join("include").join("testlib.h"))?;
     fsutil::copy_dir(
         &root.join("sample-contest"),
         &staging.join("contests").join("sample-contest"),
@@ -206,7 +238,9 @@ fn verify_package(staging: &Path) -> Result<()> {
     for relative in [
         "bin/labjudge.exe",
         "bin/go-judge.exe",
+        "include/testlib.h",
         "contests/sample-contest/contest.json",
+        "contests/sample-contest/problems/C/checker.cpp",
         "start.bat",
         "README.txt",
     ] {
@@ -278,7 +312,9 @@ fn verify_zip(zip_path: &Path) -> Result<()> {
         "labjudge/README.txt",
         "labjudge/bin/labjudge.exe",
         "labjudge/bin/go-judge.exe",
+        "labjudge/include/testlib.h",
         "labjudge/contests/sample-contest/contest.json",
+        "labjudge/contests/sample-contest/problems/C/checker.cpp",
     ] {
         if archive.by_name(required).is_err() {
             bail!("zip 缺少 {required}");
@@ -287,20 +323,12 @@ fn verify_zip(zip_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn swap_dist(dist_root: &Path, staging: &Path, dist: &Path) -> Result<()> {
-    let backup = dist_root.join("labjudge.old");
-    fsutil::remove_dir_if_exists(&backup)?;
-    if dist.exists() {
-        fs::rename(dist, &backup).context("备份旧 dist 失败")?;
-    }
-    if let Err(error) = fs::rename(staging, dist) {
-        if backup.exists() {
-            let _ = fs::rename(&backup, dist);
-        }
-        return Err(error).context("切换到新 dist 失败");
-    }
-    if let Err(error) = fsutil::remove_dir_if_exists(&backup) {
-        eprintln!("警告: 无法删除旧 dist 备份 {}: {error}", backup.display());
-    }
+/// 旧 dist 里的比赛包（如 test-contest）已另行备份，直接删除即可。
+/// 只有确实被程序或资源管理器占用时才报错，让用户关掉后重试。
+fn swap_dist(staging: &Path, dist: &Path) -> Result<()> {
+    fsutil::remove_dir_with_retry(dist).context(
+        "删除旧 dist\\labjudge 失败：请关闭正在使用它的窗口或程序（包括资源管理器），然后重试",
+    )?;
+    fs::rename(staging, dist).context("切换到新 dist 失败")?;
     Ok(())
 }

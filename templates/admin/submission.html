@@ -25,7 +25,11 @@
       <tbody>
         {% for case in group.cases %}
         <tr>
-          <td>{{ case.name }}</td><td>{{ case.verdict }}</td><td>{{ case.time_ms }} ms</td>
+          <td>
+            {{ case.name }}
+            {% if case.message.len() > 0 %}<div class="muted case-note">{{ case.message }}</div>{% endif %}
+          </td>
+          <td>{{ case.verdict }}</td><td>{{ case.time_ms }} ms</td>
           <td>{{ case.memory_kb }} KB</td><td>{{ case.score }} / {{ case.max_score }}</td>
         </tr>
         {% endfor %}

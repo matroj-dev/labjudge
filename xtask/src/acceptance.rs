@@ -34,7 +34,9 @@ pub fn run(options: Options) -> Result<()> {
         "README.txt",
         "bin/labjudge.exe",
         "bin/go-judge.exe",
+        "include/testlib.h",
         "contests/sample-contest/contest.json",
+        "contests/sample-contest/problems/C/checker.cpp",
     ] {
         if !dist.join(relative).is_file() {
             bail!("发布目录缺少 {relative}: {}", dist.display());
@@ -205,6 +207,60 @@ int main(){long long a,b;std::cin>>a>>b;std::cout<<a+b<<"\n";}
     }
     println!("[OK] 真判题 AC，隐藏模式未泄漏");
 
+    println!("[5b/8] SPJ 题：正确答案 AC，错误答案 WA");
+    let spj_page = student.get("/c/sample-contest/p/C")?;
+    spj_page.expect_ok("SPJ 题目页")?;
+    let spj_csrf = extract_csrf(&spj_page.text()?)?;
+    let spj_ac = r#"#include <bits/stdc++.h>
+int main(){double r;std::cin>>r;std::printf("%.6f\n", 3.14159265358979323846*r*r);}
+"#;
+    student
+        .post_form(
+            "/c/sample-contest/submissions",
+            &[
+                ("problem_key", "C"),
+                ("source", spj_ac),
+                ("csrf", spj_csrf.as_str()),
+            ],
+        )?
+        .expect_ok("提交 SPJ 正确解")?;
+    if !wait_for(&admin, "/admin/c/sample-contest/submissions", 120, |text| {
+        text.matches(">AC<").count() >= 2
+    })? {
+        bail!("SPJ 题的正确解没有判出 AC");
+    }
+
+    let spj_page = student.get("/c/sample-contest/p/C")?;
+    let spj_csrf = extract_csrf(&spj_page.text()?)?;
+    let spj_wa = r#"#include <bits/stdc++.h>
+int main(){double r;std::cin>>r;std::printf("%.0f\n", 3.14159*r*r);}
+"#;
+    student
+        .post_form(
+            "/c/sample-contest/submissions",
+            &[
+                ("problem_key", "C"),
+                ("source", spj_wa),
+                ("csrf", spj_csrf.as_str()),
+            ],
+        )?
+        .expect_ok("提交 SPJ 错误解")?;
+    if !wait_for(&admin, "/admin/c/sample-contest/submissions", 120, |text| {
+        text.contains(">WA<")
+    })? {
+        bail!("SPJ 题的粗糙答案没有被 checker 判为 WA");
+    }
+    let list = admin.get("/admin/c/sample-contest/submissions")?;
+    let Some(sid) = first_submission_id(&list.text()?) else {
+        bail!("提交列表里找不到详情链接");
+    };
+    let detail = admin.get(&format!("/admin/s/{sid}"))?;
+    detail.expect_ok("提交详情")?;
+    if !detail.text()?.contains("答案错误") {
+        bail!("管理端提交详情看不到 checker 的诊断信息");
+    }
+    println!("[OK] SPJ 正确解 AC、错误解 WA，诊断可见");
+
     println!("[6/8] 公开榜单并验证学生视图");
     let detail = admin.get("/admin/c/sample-contest")?;
     detail.expect_ok("比赛详情")?;
@@ -283,6 +339,34 @@ int main(){long long a,b;std::cin>>a>>b;std::cout<<a+b<<"\n";}
     Ok(())
 }
 
+/// 提交列表按时间倒序，第一条 `/admin/s/<id>` 就是最新一次提交。
+fn first_submission_id(html: &str) -> Option<String> {
+    const MARKER: &str = "/admin/s/";
+    let start = html.find(MARKER)? + MARKER.len();
+    let rest = &html[start..];
+    let end = rest.find('"').unwrap_or(rest.len());
+    let sid = rest[..end].trim();
+    (!sid.is_empty()).then(|| sid.to_string())
+}
+
+/// 轮询一个页面，直到满足条件或超时；返回是否满足。
+fn wait_for(
+    session: &Session,
+    path: &str,
+    attempts: usize,
+    predicate: impl Fn(&str) -> bool,
+) -> Result<bool> {
+    for _ in 0..attempts {
+        std::thread::sleep(Duration::from_millis(500));
+        let response = session.get(path)?;
+        response.expect_ok("轮询页面")?;
+        if predicate(&response.text()?) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn extract_csrf(html: &str) -> Result<String> {
     const NEEDLE: &str = "name=\"csrf\" value=\"";
     let start = html
@@ -321,7 +405,8 @@ impl AppGuard {
     }
 
     fn wait_healthy(&mut self, probe: &Session) -> Result<()> {
-        for _ in 0..100 {
+        // 启动时会编译全部 checker（带 testlib 的每题约 6 秒），多题比赛需要更长时间。
+        for _ in 0..300 {
             if let Some(status) = self.child.try_wait()? {
                 bail!("程序提前退出: {status}");
             }
@@ -332,7 +417,7 @@ impl AppGuard {
             }
             std::thread::sleep(Duration::from_millis(200));
         }
-        bail!("程序未在 20 秒内就绪");
+        bail!("程序未在 60 秒内就绪");
     }
 }
 
@@ -371,5 +456,15 @@ mod tests {
     fn rejects_missing_or_empty_csrf() {
         assert!(extract_csrf("<html></html>").is_err());
         assert!(extract_csrf(r#"name="csrf" value="" "#).is_err());
+    }
+}
+
+#[cfg(test)]
+mod id_tests {
+    #[test]
+    fn first_submission_id_takes_the_first_link() {
+        let html = r#"<a href="/admin/s/c~42">42</a><a href="/admin/s/c~41">41</a>"#;
+        assert_eq!(super::first_submission_id(html).as_deref(), Some("c~42"));
+        assert_eq!(super::first_submission_id("<p>无</p>"), None);
     }
 }

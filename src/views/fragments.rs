@@ -68,6 +68,7 @@ pub struct CaseView {
     pub memory_kb: u64,
     pub score: i32,
     pub max_score: i32,
+    pub message: String,
 }
 
 #[derive(Deserialize)]
@@ -79,6 +80,8 @@ struct CaseJson {
     memory_kb: u64,
     score: i32,
     max_score: i32,
+    #[serde(default)]
+    message: Option<String>,
 }
 
 pub fn submission_view(row: &SubmissionRow, visible: bool) -> SubmissionView {
@@ -150,6 +153,11 @@ fn submission_view_with_compile(
                     memory_kb: case.memory_kb,
                     score: case.score,
                     max_score: case.max_score,
+                    message: if filter_compile {
+                        String::new()
+                    } else {
+                        case.message.unwrap_or_default()
+                    },
                 });
             }
             view.groups = groups;
@@ -263,6 +271,26 @@ mod tests {
         assert_eq!(view.groups[0].name, "小数据");
         assert_eq!(view.groups[0].score, 50);
         assert_eq!(view.groups[0].cases.len(), 1);
+    }
+
+    #[test]
+    fn checker_message_is_admin_only() {
+        let mut row = row();
+        row.verdict = Some(Verdict::Wa);
+        row.cases_json = Some(
+            r#"[{"name":"1","subtask":"小数据","verdict":"WA","time_ms":12,"memory_kb":1024,"score":0,"max_score":50,"message":"wrong answer 答案错误"}]"#
+                .to_string(),
+        );
+
+        let admin = submission_view_raw(&row, true);
+        assert_eq!(
+            admin.groups[0].cases[0].message,
+            "wrong answer 答案错误".to_string()
+        );
+
+        // 学生端能看到自己的 AC/WA，但不该看到 checker 的诊断。
+        let student = submission_view(&row, true);
+        assert_eq!(student.groups[0].cases[0].message, "");
     }
 
     #[test]

@@ -12,6 +12,8 @@ pub struct RawCase {
     pub verdict: Verdict,
     pub time_ms: u64,
     pub memory_kb: u64,
+    /// SPJ 的诊断（checker 的 stderr），只给管理端看。
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -23,6 +25,8 @@ pub struct ScoredCase {
     pub memory_kb: u64,
     pub score: i32,
     pub max_score: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,6 +128,7 @@ pub fn score_problem(
                     memory_kb: raw_case.memory_kb,
                     score,
                     max_score,
+                    message: raw_case.message.clone(),
                 },
             );
         }
@@ -182,6 +187,7 @@ mod tests {
             statement_path: PathBuf::from("C:/problem/statement.md"),
             test_cases: cases,
             subtasks,
+            checker: None,
         }
     }
 
@@ -202,6 +208,7 @@ mod tests {
                 verdict: *verdict,
                 time_ms: 10,
                 memory_kb: 1024,
+                message: None,
             })
             .collect()
     }

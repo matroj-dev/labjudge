@@ -6,15 +6,28 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 
 use super::model::{
-    ContestDraft, ContestJson, PackageError, ProblemDraft, ProblemJson, ProblemRef, SubtaskKind,
-    TestCase, ValidatedProblem, ValidatedSubtask,
+    Checker, ContestDraft, ContestJson, PackageError, ProblemDraft, ProblemJson, ProblemRef,
+    SubtaskKind, TestCase, ValidatedProblem, ValidatedSubtask,
 };
+
+/// testlib 打开输入/答案文件时有大小上限，超限会退化成 `_fail`；
+/// 在加载阶段就挡掉巨型数据，比评测时报「checker 失败」好排查。
+const MAX_TEST_FILE_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_CHECKER_BYTES: u64 = 1024 * 1024;
 
 pub fn load_json<T: DeserializeOwned>(path: &Path) -> Result<T, PackageError> {
     let text = fs::read_to_string(path)
         .map_err(|error| PackageError::new(path, format!("读取失败: {error}")))?;
-    serde_json::from_str(&text)
-        .map_err(|error| PackageError::new(path, format!("JSON 解析失败: {error}")))
+    serde_json::from_str(&text).map_err(|error| {
+        let mut reason = format!("JSON 解析失败: {error}");
+        let text = error.to_string();
+        if text.contains("missing field") {
+            reason.push_str("\n该字段必须显式填写，没有默认值");
+        } else if text.contains("unknown field") {
+            reason.push_str("\n字段名拼写有误，请对照 README 的示例");
+        }
+        PackageError::new(path, reason)
+    })
 }
 
 pub fn is_valid_contest_id(id: &str) -> bool {
@@ -117,6 +130,18 @@ pub fn discover_test_cases(problem_dir: &Path) -> Result<Vec<TestCase>, PackageE
         {
             return Err(PackageError::new(&path, format!("测试点重名: {name}")));
         }
+
+        for file in [&path, &out_path] {
+            let size = fs::metadata(file)
+                .map_err(|error| PackageError::new(file, format!("读取大小失败: {error}")))?
+                .len();
+            if size > MAX_TEST_FILE_BYTES {
+                return Err(PackageError::new(
+                    file,
+                    format!("测试点文件超过 {} MiB", MAX_TEST_FILE_BYTES / 1024 / 1024),
+                ));
+            }
+        }
     }
 
     if found.is_empty() {
@@ -133,6 +158,55 @@ pub fn discover_test_cases(problem_dir: &Path) -> Result<Vec<TestCase>, PackageE
         .collect::<Vec<_>>();
     test_cases.sort_by(|a, b| natural_cmp(&a.name, &b.name));
     Ok(test_cases)
+}
+
+/// 强制扫描 `problems/` 下的一级子目录，目录名即题号。
+/// 这里先校验目录名本身，随后 `load_contest_draft` 会逐题加载并校验题目内容。
+fn discover_problem_refs(root: &Path) -> Result<Vec<ProblemRef>, PackageError> {
+    let problems_dir = root.join("problems");
+    let entries = fs::read_dir(&problems_dir).map_err(|error| {
+        PackageError::new(&problems_dir, format!("problems 目录不可读: {error}"))
+    })?;
+
+    let mut refs = Vec::new();
+    let mut seen_folded_keys = HashSet::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            PackageError::new(&problems_dir, format!("扫描 problems 目录失败: {error}"))
+        })?;
+        // 目录里可能有 README 之类的文件，只认一级子目录。
+        if !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let key = entry.file_name().to_string_lossy().into_owned();
+        if !is_valid_problem_key(&key) {
+            return Err(PackageError::new(
+                entry.path(),
+                format!("题号（目录名）非法: {key}（只允许 1～16 位 ASCII 字母或数字）"),
+            ));
+        }
+        // 题号会出现在 checker 产物与提交目录里，Windows 不区分大小写。
+        if !seen_folded_keys.insert(key.to_lowercase()) {
+            return Err(PackageError::new(
+                entry.path(),
+                format!("题号只有大小写不同: {key}（文件系统不区分大小写）"),
+            ));
+        }
+        let dir = fs::canonicalize(entry.path())
+            .map_err(|error| PackageError::new(entry.path(), format!("题目目录不可读: {error}")))?;
+        if !dir.starts_with(root) {
+            return Err(PackageError::new(entry.path(), "题目目录逃逸出比赛目录"));
+        }
+        refs.push(ProblemRef { key, dir });
+    }
+    refs.sort_by(|left, right| natural_cmp(&left.key, &right.key));
+    if refs.is_empty() {
+        return Err(PackageError::new(
+            &problems_dir,
+            "至少需要一个题目（problems 目录为空）",
+        ));
+    }
+    Ok(refs)
 }
 
 pub fn validate_contest_header(
@@ -162,60 +236,7 @@ pub fn validate_contest_header(
             "durationMinutes 必须在 1～600 之间",
         ));
     }
-    if json.problems.is_empty() {
-        return Err(PackageError::new(
-            root.join("contest.json"),
-            "至少需要一个题目",
-        ));
-    }
-
-    let mut seen_keys = HashSet::new();
-    let mut problems = Vec::with_capacity(json.problems.len());
-    for problem in &json.problems {
-        if !is_valid_problem_key(&problem.key) {
-            return Err(PackageError::new(
-                root.join("contest.json"),
-                format!("题号非法: {}", problem.key),
-            ));
-        }
-        if !seen_keys.insert(problem.key.clone()) {
-            return Err(PackageError::new(
-                root.join("contest.json"),
-                format!("题号重复: {}", problem.key),
-            ));
-        }
-        let relative = Path::new(&problem.dir);
-        if problem.dir.trim().is_empty() || relative.is_absolute() {
-            return Err(PackageError::new(
-                root.join("contest.json"),
-                format!("题号 {} 的 dir 非法: {}", problem.key, problem.dir),
-            ));
-        }
-
-        let candidate = root.join(relative);
-        let dir = fs::canonicalize(&candidate).map_err(|error| {
-            PackageError::new(
-                &candidate,
-                format!("题号 {} 的目录不存在或不可读: {error}", problem.key),
-            )
-        })?;
-        if !dir.starts_with(&root) {
-            return Err(PackageError::new(
-                &candidate,
-                format!("题号 {} 的目录逃逸出比赛目录", problem.key),
-            ));
-        }
-        if !dir.is_dir() {
-            return Err(PackageError::new(&candidate, "题目路径不是目录"));
-        }
-
-        problems.push(ProblemRef {
-            key: problem.key.clone(),
-            dir,
-        });
-    }
-
-    Ok(problems)
+    discover_problem_refs(&root)
 }
 
 pub fn load_problem_draft(
@@ -258,6 +279,7 @@ pub fn load_problem_draft(
         return Err(PackageError::new(&statement_path, "缺少 statement.md"));
     }
     let test_cases = discover_test_cases(&dir)?;
+    let checker = resolve_checker(&dir, json)?;
 
     Ok(ProblemDraft {
         key: reference.key.clone(),
@@ -269,7 +291,54 @@ pub fn load_problem_draft(
         root: dir,
         statement_path,
         test_cases,
+        checker,
     })
+}
+
+/// 固定文件名 `checker.cpp`；`enabled = false` 时即使文件存在也不启用。
+fn resolve_checker(dir: &Path, json: &ProblemJson) -> Result<Option<Checker>, PackageError> {
+    let Some(config) = &json.checker else {
+        return Ok(None);
+    };
+    if !config.enabled {
+        return Ok(None);
+    }
+    let problem_json = dir.join("problem.json");
+    if !(100..=60_000).contains(&config.time_limit_ms) {
+        return Err(PackageError::new(
+            &problem_json,
+            "checker.timeLimitMs 必须在 100～60000 之间",
+        ));
+    }
+    if !(16..=2048).contains(&config.memory_limit_mb) {
+        return Err(PackageError::new(
+            &problem_json,
+            "checker.memoryLimitMb 必须在 16～2048 之间",
+        ));
+    }
+
+    let source = dir.join("checker.cpp");
+    if !source.is_file() {
+        return Err(PackageError::new(
+            &source,
+            "已启用 checker，但题目目录缺少 checker.cpp（不想启用请把 enabled 改成 false）",
+        ));
+    }
+    let size = fs::metadata(&source)
+        .map_err(|error| PackageError::new(&source, format!("读取大小失败: {error}")))?
+        .len();
+    if size > MAX_CHECKER_BYTES {
+        return Err(PackageError::new(&source, "checker.cpp 超过 1 MiB"));
+    }
+    if size == 0 {
+        return Err(PackageError::new(&source, "checker.cpp 是空文件"));
+    }
+
+    Ok(Some(Checker {
+        source,
+        time_limit_ms: config.time_limit_ms,
+        memory_limit_mb: config.memory_limit_mb,
+    }))
 }
 
 pub fn load_contest_draft(contest_dir: &Path) -> Result<ContestDraft, PackageError> {
@@ -423,13 +492,14 @@ pub fn validate_problem(draft: ProblemDraft) -> Result<ValidatedProblem, Package
         statement_path: draft.statement_path,
         test_cases: draft.test_cases,
         subtasks,
+        checker: draft.checker,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contest::model::{ProblemJson, ProblemRefJson, SubtaskJson};
+    use crate::contest::model::{ProblemJson, SubtaskJson};
     use std::fs;
 
     fn write(path: &Path, content: &str) {
@@ -439,19 +509,11 @@ mod tests {
         fs::write(path, content).unwrap();
     }
 
-    fn contest_json(title: &str, duration: u32, problems: Vec<ProblemRefJson>) -> ContestJson {
+    fn contest_json(title: &str, duration: u32) -> ContestJson {
         ContestJson {
             title: title.to_string(),
             duration_minutes: duration,
             leaderboard_visible: false,
-            problems,
-        }
-    }
-
-    fn problem_ref(key: &str, dir: &str) -> ProblemRefJson {
-        ProblemRefJson {
-            key: key.to_string(),
-            dir: dir.to_string(),
         }
     }
 
@@ -462,6 +524,7 @@ mod tests {
             memory_limit_mb: memory,
             full_score: Some(100),
             subtasks: None,
+            checker: None,
         }
     }
 
@@ -517,70 +580,80 @@ mod tests {
     }
 
     #[test]
-    fn contest_header_accepts_valid_json_and_ignores_unknown_fields() {
+    fn contest_header_ignores_leftover_problems_field() {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir_all(dir.path().join("problems/A")).unwrap();
         fs::create_dir_all(dir.path().join("problems/B")).unwrap();
+        // 项目从未发包，旧包里可能残留 problems 字段；serde 静默跳过，仍按目录扫描。
         let json: ContestJson = serde_json::from_str(
             r#"{
                 "title": "测试赛",
                 "durationMinutes": 60,
                 "leaderboardVisible": true,
-                "unknown": "ignored",
-                "problems": [
-                    {"key": "A", "dir": "problems/A"},
-                    {"key": "B", "dir": "problems/B"}
-                ]
+                "problems": [{"key": "B", "dir": "problems/B"}]
             }"#,
         )
         .unwrap();
 
         let refs = validate_contest_header(dir.path(), &json).unwrap();
-        assert_eq!(refs.len(), 2);
-        assert_eq!(refs[0].key, "A");
+        assert_eq!(
+            refs.iter()
+                .map(|item| item.key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["A", "B"]
+        );
         assert!(refs[0]
             .dir
             .starts_with(fs::canonicalize(dir.path()).unwrap()));
     }
 
     #[test]
-    fn contest_header_rejects_bad_fields() {
+    fn contest_header_scans_problems_directory() {
         let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("problems/B")).unwrap();
         fs::create_dir_all(dir.path().join("problems/A")).unwrap();
+        fs::write(dir.path().join("problems/README.md"), "not a problem").unwrap();
 
-        let cases = [
-            contest_json("", 60, vec![problem_ref("A", "problems/A")]),
-            contest_json(&"x".repeat(121), 60, vec![problem_ref("A", "problems/A")]),
-            contest_json("t", 0, vec![problem_ref("A", "problems/A")]),
-            contest_json("t", 601, vec![problem_ref("A", "problems/A")]),
-            contest_json("t", 60, vec![]),
-            contest_json("t", 60, vec![problem_ref("bad key", "problems/A")]),
-            contest_json(
-                "t",
-                60,
-                vec![
-                    problem_ref("A", "problems/A"),
-                    problem_ref("A", "problems/A"),
-                ],
-            ),
-            contest_json("t", 60, vec![problem_ref("A", "problems/missing")]),
-        ];
-
-        for case in cases {
-            assert!(validate_contest_header(dir.path(), &case).is_err());
-        }
+        let refs = validate_contest_header(dir.path(), &contest_json("t", 60)).unwrap();
+        assert_eq!(
+            refs.iter()
+                .map(|item| item.key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["A", "B"]
+        );
+        assert!(refs[0].dir.ends_with("problems/A"));
     }
 
     #[test]
-    fn contest_header_rejects_directory_escape() {
-        let base = tempfile::tempdir().unwrap();
-        let contest = base.path().join("contest");
-        fs::create_dir_all(&contest).unwrap();
-        fs::create_dir_all(base.path().join("outside")).unwrap();
+    fn contest_header_requires_problems_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = validate_contest_header(dir.path(), &contest_json("t", 60)).unwrap_err();
+        assert!(error.to_string().contains("problems 目录不可读"));
+    }
 
-        let json = contest_json("t", 60, vec![problem_ref("A", "../outside")]);
-        let error = validate_contest_header(&contest, &json).unwrap_err();
-        assert!(error.to_string().contains("逃逸"));
+    #[test]
+    fn contest_header_rejects_bad_fields_and_dir_names() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("problems/A")).unwrap();
+
+        for case in [
+            contest_json("", 60),
+            contest_json(&"x".repeat(121), 60),
+            contest_json("t", 0),
+            contest_json("t", 601),
+        ] {
+            assert!(validate_contest_header(dir.path(), &case).is_err());
+        }
+
+        let invalid = tempfile::tempdir().unwrap();
+        fs::create_dir_all(invalid.path().join("problems/bad key")).unwrap();
+        let error = validate_contest_header(invalid.path(), &contest_json("t", 60)).unwrap_err();
+        assert!(error.to_string().contains("题号"));
+
+        let empty = tempfile::tempdir().unwrap();
+        fs::create_dir_all(empty.path().join("problems")).unwrap();
+        let error = validate_contest_header(empty.path(), &contest_json("t", 60)).unwrap_err();
+        assert!(error.to_string().contains("至少需要一个题目"));
     }
 
     #[test]
@@ -619,7 +692,7 @@ mod tests {
         let contest = dir.path().join("c");
         write(
             &contest.join("contest.json"),
-            r#"{"title":"T","durationMinutes":60,"problems":[{"key":"B","dir":"problems/B"},{"key":"A","dir":"problems/A"}]}"#,
+            r#"{"title":"T","durationMinutes":60}"#,
         );
         for key in ["A", "B"] {
             write(
@@ -637,9 +710,136 @@ mod tests {
         }
 
         let draft = load_contest_draft(&contest).unwrap();
-        assert_eq!(draft.problems[0].key, "B");
-        assert_eq!(draft.problems[1].key, "A");
+        assert_eq!(draft.problems[0].key, "A");
+        assert_eq!(draft.problems[1].key, "B");
         assert_eq!(draft.problems[0].test_cases.len(), 1);
+    }
+
+    fn checker_problem(
+        dir: &Path,
+        json: &str,
+        checker_source: Option<&str>,
+    ) -> Result<ProblemDraft, PackageError> {
+        let problem = dir.join("problems/A");
+        write(&problem.join("statement.md"), "s");
+        write(&problem.join("testdata/1.in"), "in");
+        write(&problem.join("testdata/1.out"), "out");
+        if let Some(source) = checker_source {
+            write(&problem.join("checker.cpp"), source);
+        }
+        write(&problem.join("problem.json"), json);
+        let reference = ProblemRef {
+            key: "A".to_string(),
+            dir: fs::canonicalize(&problem).unwrap(),
+        };
+        let json: ProblemJson = load_json(&problem.join("problem.json")).unwrap();
+        load_problem_draft(dir, &reference, &json)
+    }
+
+    fn checker_json(enabled: bool, time_limit_ms: u32, memory_limit_mb: u32) -> String {
+        format!(
+            r#"{{"title":"A","timeLimitMs":1000,"memoryLimitMb":256,"fullScore":100,
+                "checker":{{"enabled":{enabled},"timeLimitMs":{time_limit_ms},"memoryLimitMb":{memory_limit_mb}}}}}"#
+        )
+    }
+
+    fn checker_json_of(checker: &str) -> String {
+        format!(
+            r#"{{"title":"A","timeLimitMs":1000,"memoryLimitMb":256,"fullScore":100,"checker":{checker}}}"#
+        )
+    }
+
+    #[test]
+    fn checker_config_has_no_defaults() {
+        // 三项都必填：缺任何一项都要在加载阶段报出来，而不是悄悄按默认值跑。
+        for (checker, missing) in [
+            (r#"{"timeLimitMs":5000,"memoryLimitMb":512}"#, "enabled"),
+            (r#"{"enabled":true,"memoryLimitMb":512}"#, "timeLimitMs"),
+            (r#"{"enabled":true,"timeLimitMs":5000}"#, "memoryLimitMb"),
+            ("{}", "enabled"),
+        ] {
+            let error = serde_json::from_str::<ProblemJson>(&checker_json_of(checker)).unwrap_err();
+            assert!(
+                error.to_string().contains(missing),
+                "{checker} 应当报缺少 {missing}，实际: {error}"
+            );
+        }
+
+        // 拼错字段名同样报错（deny_unknown_fields），不会被当成「少写一项、用默认值」。
+        let typo = r#"{"enabled":true,"timeLimitMs":5000,"memoryLimitMB":512}"#;
+        assert!(serde_json::from_str::<ProblemJson>(&checker_json_of(typo)).is_err());
+    }
+
+    #[test]
+    fn checker_is_off_unless_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        // 没有 checker 段：即使目录里有 checker.cpp 也忽略（完全相信教师）。
+        let base = r#"{"title":"A","timeLimitMs":1000,"memoryLimitMb":256,"fullScore":100}"#;
+        let draft = checker_problem(dir.path(), base, Some("int main(){}")).unwrap();
+        assert!(draft.checker.is_none());
+
+        // 声明了但 enabled=false：有文件也不用。
+        let draft = checker_problem(
+            dir.path(),
+            &checker_json(false, 5000, 512),
+            Some("int main(){}"),
+        )
+        .unwrap();
+        assert!(draft.checker.is_none());
+    }
+
+    #[test]
+    fn enabled_checker_needs_source_and_keeps_configured_limits() {
+        let dir = tempfile::tempdir().unwrap();
+        let draft = checker_problem(
+            dir.path(),
+            &checker_json(true, 8000, 256),
+            Some("int main(){}"),
+        )
+        .unwrap();
+        let checker = draft.checker.expect("应当启用 checker");
+        assert_eq!(checker.time_limit_ms, 8000);
+        assert_eq!(checker.memory_limit_mb, 256);
+        assert!(checker.source.ends_with("checker.cpp"));
+
+        let dir = tempfile::tempdir().unwrap();
+        let error = checker_problem(dir.path(), &checker_json(true, 5000, 512), None).unwrap_err();
+        assert!(error.reason.contains("checker.cpp"));
+    }
+
+    #[test]
+    fn checker_limits_are_validated() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = checker_problem(
+            dir.path(),
+            &checker_json(true, 10, 512),
+            Some("int main(){}"),
+        )
+        .unwrap_err();
+        assert!(error.reason.contains("timeLimitMs"));
+
+        let dir = tempfile::tempdir().unwrap();
+        let error = checker_problem(
+            dir.path(),
+            &checker_json(true, 5000, 9999),
+            Some("int main(){}"),
+        )
+        .unwrap_err();
+        assert!(error.reason.contains("memoryLimitMb"));
+    }
+
+    #[test]
+    fn checker_source_must_not_be_empty_or_huge() {
+        let dir = tempfile::tempdir().unwrap();
+        let error =
+            checker_problem(dir.path(), &checker_json(true, 5000, 512), Some("")).unwrap_err();
+        assert!(error.reason.contains("空文件"));
+
+        let dir = tempfile::tempdir().unwrap();
+        let huge = "a".repeat(1024 * 1024 + 1);
+        let error =
+            checker_problem(dir.path(), &checker_json(true, 5000, 512), Some(&huge)).unwrap_err();
+        assert!(error.reason.contains("1 MiB"));
     }
 
     #[test]
@@ -664,6 +864,7 @@ mod tests {
                 kind: Default::default(),
                 cases: vec!["1".to_string()],
             }]),
+            checker: None,
         };
         let draft = load_problem_draft(dir.path(), &reference, &json).unwrap();
         assert!(draft.full_score.is_none());
@@ -694,6 +895,7 @@ mod tests {
             root: root.clone(),
             statement_path: root.join("statement.md"),
             test_cases,
+            checker: None,
         }
     }
 

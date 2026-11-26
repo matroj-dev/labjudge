@@ -35,8 +35,10 @@ impl JudgeEngine for FakeEngine {
                 memory_kb: 1024,
                 score: 100,
                 max_score: 100,
+                message: None,
             }],
             compile_output: None,
+            compile_ms: 10,
             error: None,
         }
     }
@@ -176,6 +178,44 @@ async fn submit_without_queue_returns_503_and_page_disables_button() {
 }
 
 #[tokio::test]
+async fn source_files_are_grouped_by_student_then_problem() {
+    let mut app = TestApp::without_submit_cooldown();
+    app.start_contest();
+    app = app.with_fake_engine(Arc::new(FakeEngine::default()));
+
+    for (student, problem, source) in [
+        ("2026001", "A", "int main(){return 0;}"),
+        ("2026001", "A", "int main(){return 1;}"),
+        ("2026001", "B", "int main(){return 2;}"),
+        ("2026002", "A", "int main(){return 3;}"),
+    ] {
+        let response = submit(&app, student, problem, source, None).await;
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    }
+
+    let data = app.store().data_dir().to_path_buf();
+    for relative in [
+        "submissions/2026001/A/1.cpp",
+        "submissions/2026001/A/2.cpp",
+        "submissions/2026001/B/1.cpp",
+        "submissions/2026002/A/1.cpp",
+    ] {
+        assert!(data.join(relative).is_file(), "缺少 {relative}");
+    }
+    assert_eq!(
+        fs::read_to_string(data.join("submissions/2026001/A/2.cpp")).unwrap(),
+        "int main(){return 1;}"
+    );
+
+    // 数据库里存的是绝对路径，重启恢复评测时按它找文件。
+    let rows = app.store().submissions_for_student("2026001").unwrap();
+    assert!(rows.iter().any(|row| row.source_path.ends_with("A/2.cpp")));
+    assert!(rows.iter().any(|row| row.source_path.ends_with("B/1.cpp")));
+    // 同一学生的两次 A 题提交不会互相覆盖。
+    assert_eq!(rows.len(), 3);
+}
+
+#[tokio::test]
 async fn queue_recovers_queued_submission_and_fails_missing_source() {
     let app = TestApp::new();
     let store = app.store();
@@ -191,7 +231,8 @@ async fn queue_recovers_queued_submission_and_fails_missing_source() {
             source_path,
             created_at: now_ms(),
         })
-        .unwrap();
+        .unwrap()
+        .id;
     let missing_id = store
         .insert_submission(&NewSubmission {
             student_id: "2026001".to_string(),
@@ -200,7 +241,8 @@ async fn queue_recovers_queued_submission_and_fails_missing_source() {
             source_path: store.data_dir().join("submissions/missing.cpp"),
             created_at: now_ms(),
         })
-        .unwrap();
+        .unwrap()
+        .id;
 
     let app = app.with_fake_engine(Arc::new(FakeEngine::default()));
     let good = wait_status(&app, good_id).await;

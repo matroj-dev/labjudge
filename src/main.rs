@@ -8,7 +8,7 @@ use labjudge::app_state::AppState;
 use labjudge::config::Config;
 use labjudge::judge::{CaseRunner, Compiler, CompilerBackend, JudgeQueue, RealEngine, Supervisor};
 use labjudge::paths::{candidate_ports, DataLock, Paths};
-use labjudge::services::registry::{scan_contests, ContestRegistry};
+use labjudge::services::registry::{scan_contests, ContestRegistry, InvalidContest};
 use tokio::net::TcpListener;
 
 #[tokio::main]
@@ -25,7 +25,7 @@ async fn main() -> anyhow::Result<()> {
     let _data_lock = DataLock::acquire(&paths.data).context("锁定数据目录失败")?;
 
     let (config, first_run) =
-        Config::load_or_create(&paths.root).context("读取或生成 config.json 失败")?;
+        Config::load_or_create(&paths.root).context("读取或校验 config.json 失败")?;
 
     tracing::info!(root = %paths.root.display(), "工具根目录");
     tracing::info!(config = %paths.config_file.display(), "配置文件");
@@ -48,23 +48,66 @@ async fn main() -> anyhow::Result<()> {
     );
     tracing::info!(version = supervisor.version(), "go-judge 就绪");
 
-    let registry = Arc::new(ContestRegistry::load(
-        scan_contests(&paths.contests),
-        &paths.data,
-    ));
-    for invalid in registry.invalid() {
-        tracing::warn!(
-            contest = %invalid.id,
-            path = %invalid.path.display(),
-            reason = %invalid.reason,
-            "比赛包校验失败"
+    let report = scan_contests(&paths.contests);
+    // 比赛包/题目/名单有任何校验错误都直接退出，不能带着 invalid 比赛开服务。
+    if !report.invalid.is_empty() {
+        for invalid in &report.invalid {
+            tracing::error!(
+                contest = %invalid.id,
+                path = %invalid.path.display(),
+                reason = %invalid.reason,
+                "比赛包校验失败"
+            );
+        }
+        bail!(
+            "发现 {} 个比赛包校验失败，程序不会启动：\n{}",
+            report.invalid.len(),
+            invalid_details(&report.invalid)
         );
     }
-    tracing::info!(
-        valid = registry.valid_count(),
-        invalid = registry.invalid().len(),
-        "比赛包扫描完成"
-    );
+    let packages = report.valid.clone();
+    let registry = Arc::new(ContestRegistry::load(report, &paths.data));
+    let broken_stores = registry.invalid();
+    if !broken_stores.is_empty() {
+        for invalid in &broken_stores {
+            tracing::error!(
+                contest = %invalid.id,
+                path = %invalid.path.display(),
+                reason = %invalid.reason,
+                "比赛数据目录打开失败"
+            );
+        }
+        bail!(
+            "有 {} 场比赛的数据目录无法打开，程序不会启动：\n{}",
+            broken_stores.len(),
+            invalid_details(&broken_stores)
+        );
+    }
+    tracing::info!(valid = registry.valid_count(), "比赛包扫描完成");
+
+    // 带 checker 的题在加载阶段就预编译：比赛进行中才发现 checker 编不过，
+    // 教师没有任何补救手段，所以这里失败就整机不启动。
+    let checkers = labjudge::judge::prepare_all(
+        &packages,
+        compiler.as_ref(),
+        &paths.testlib,
+        &paths.checkers_dir(),
+    )
+    .await;
+    match checkers {
+        Ok(prepared) => tracing::info!(
+            count = prepared.len(),
+            total_ms = prepared.iter().map(|item| item.elapsed_ms).sum::<u64>(),
+            "SPJ 检查器准备完成"
+        ),
+        Err(error) => {
+            tracing::error!(%error, "SPJ 检查器准备失败");
+            bail!(
+                "{error}\n\n程序不会启动。请修正上面的问题；\
+                 如果只想先跑起来，把该题 checker 的 enabled 改成 false（另两项照填）。"
+            );
+        }
+    }
 
     if first_run {
         println!("首次启动，管理口令：{}", config.admin_password);
@@ -84,7 +127,11 @@ async fn main() -> anyhow::Result<()> {
     let queue = {
         let compiler_backend: Arc<dyn CompilerBackend> = compiler.clone();
         let runner: Arc<dyn CaseRunner> = Arc::new(supervisor.client());
-        let engine = Arc::new(RealEngine::new(compiler_backend, runner));
+        let engine = Arc::new(RealEngine::new(
+            compiler_backend,
+            runner,
+            paths.checkers_dir(),
+        ));
         JudgeQueue::start(registry.clone(), engine, config.judge_concurrency)
     };
 
@@ -138,6 +185,14 @@ async fn main() -> anyhow::Result<()> {
     .await
     .context("HTTP 服务异常退出")?;
     Ok(())
+}
+
+fn invalid_details(invalid: &[InvalidContest]) -> String {
+    invalid
+        .iter()
+        .map(|item| format!("- {}（{}）: {}", item.id, item.path.display(), item.reason))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 async fn bind_available(start: u16) -> anyhow::Result<(TcpListener, u16)> {

@@ -1,0 +1,11 @@
+{
+    "title": "圆的面积",
+    "timeLimitMs": 1000,
+    "memoryLimitMb": 256,
+    "fullScore": 100,
+    "checker": {
+        "enabled": true,
+        "timeLimitMs": 5000,
+        "memoryLimitMb": 512
+    }
+}

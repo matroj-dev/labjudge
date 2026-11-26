@@ -67,6 +67,7 @@ fn problem(
         statement_path: dir.join("statement.md"),
         test_cases,
         subtasks,
+        checker: None,
     }
 }
 
@@ -121,7 +122,7 @@ async fn live_judge_ac_wa_tle_re_ce_and_subtasks() {
     let supervisor = Supervisor::start(&paths, 2).await.unwrap();
     let runner: Arc<dyn CaseRunner> = Arc::new(supervisor.client());
     let compiler_backend: Arc<dyn CompilerBackend> = compiler;
-    let engine = RealEngine::new(compiler_backend, runner);
+    let engine = RealEngine::new(compiler_backend, runner, root.path().join("checkers"));
 
     let ac = problem(
         root.path(),
@@ -261,7 +262,11 @@ async fn live_app_submit_reaches_ac_through_queue() {
     let supervisor = Supervisor::start(&paths, 1).await.unwrap();
     let compiler_backend: Arc<dyn CompilerBackend> = compiler;
     let runner: Arc<dyn CaseRunner> = Arc::new(supervisor.client());
-    let engine: Arc<dyn JudgeEngine> = Arc::new(RealEngine::new(compiler_backend, runner));
+    let engine: Arc<dyn JudgeEngine> = Arc::new(RealEngine::new(
+        compiler_backend,
+        runner,
+        paths.checkers_dir(),
+    ));
     app = app.with_fake_engine(engine);
 
     let (headers, csrf) = app.student_auth("2026001");

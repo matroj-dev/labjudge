@@ -251,7 +251,7 @@ mod tests {
         let contest = root.join(id);
         write(
             &contest.join("contest.json"),
-            r#"{"title":"测试赛","durationMinutes":60,"leaderboardVisible":false,"problems":[{"key":"B","dir":"problems/B"},{"key":"A","dir":"problems/A"}]}"#,
+            r#"{"title":"测试赛","durationMinutes":60,"leaderboardVisible":false}"#,
         );
         write(
             &contest.join("students.csv"),
@@ -280,7 +280,7 @@ mod tests {
                 .iter()
                 .map(|problem| problem.key.as_str())
                 .collect::<Vec<_>>(),
-            vec!["B", "A"]
+            vec!["A", "B"]
         );
         assert_eq!(report.valid[0].roster.students().len(), 1);
         assert!(report.valid[0].find_problem("A").is_some());
@@ -320,7 +320,7 @@ mod tests {
 
         write(
             &contest.join("contest.json"),
-            r#"{"title":"t","durationMinutes":60,"problems":[{"key":"A","dir":"problems/A"}]}"#,
+            r#"{"title":"t","durationMinutes":60}"#,
         );
         make_problem(&contest, "A");
         write(&contest.join("students.csv"), "name\n张三\n");
@@ -330,31 +330,24 @@ mod tests {
     }
 
     #[test]
-    fn problem_directory_escape_and_missing_output_are_invalid() {
+    fn invalid_problem_dir_name_and_missing_output_are_invalid() {
         let base = tempfile::tempdir().unwrap();
         let contests = base.path().join("contests");
         let contest = contests.join("c");
         write(
             &contest.join("contest.json"),
-            r#"{"title":"t","durationMinutes":60,"problems":[{"key":"A","dir":"../../outside"}]}"#,
+            r#"{"title":"t","durationMinutes":60}"#,
         );
         write(
             &contest.join("students.csv"),
             "name,student_id,password\n张三,1,p\n",
         );
-        fs::create_dir_all(base.path().join("outside")).unwrap();
+        fs::create_dir_all(contest.join("problems/bad key")).unwrap();
         let report = scan_contests(&contests);
         assert_eq!(report.invalid.len(), 1);
-        assert!(report.invalid[0].reason.contains("逃逸"));
+        assert!(report.invalid[0].reason.contains("题号"));
 
-        write(
-            &contest.join("contest.json"),
-            r#"{"title":"t","durationMinutes":60,"problems":[{"key":"A","dir":"problems/A"}]}"#,
-        );
-        write(
-            &contest.join("students.csv"),
-            "name,student_id,password\n张三,1,p\n",
-        );
+        fs::remove_dir_all(contest.join("problems/bad key")).unwrap();
         write(
             &contest.join("problems/A/problem.json"),
             r#"{"title":"A","timeLimitMs":1000,"memoryLimitMb":256,"fullScore":100}"#,
