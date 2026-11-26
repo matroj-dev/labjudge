@@ -17,33 +17,43 @@ pub enum ExportError {
     Zip(#[from] ::zip::result::ZipError),
 }
 
+fn attachment_header(filename: &str) -> axum::http::HeaderValue {
+    use axum::http::HeaderValue;
+    // HTTP 头只能是 ASCII；中文比赛 ID 用 RFC 5987 的 filename* 传递。
+    let value = if filename.is_ascii() {
+        format!("attachment; filename=\"{filename}\"")
+    } else {
+        format!(
+            "attachment; filename*=UTF-8''{}",
+            crate::url::segment(filename)
+        )
+    };
+    HeaderValue::from_str(&value).unwrap_or_else(|_| HeaderValue::from_static("attachment"))
+}
+
 pub fn csv_response(bytes: Vec<u8>, filename: &str) -> axum::response::Response {
-    use axum::http::{header, HeaderValue};
+    use axum::http::header;
     let mut response = axum::response::Response::new(axum::body::Body::from(bytes));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_static("text/csv; charset=utf-8"),
+        header::HeaderValue::from_static("text/csv; charset=utf-8"),
     );
-    response.headers_mut().insert(
-        header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
-            .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
-    );
+    response
+        .headers_mut()
+        .insert(header::CONTENT_DISPOSITION, attachment_header(filename));
     response
 }
 
 pub fn zip_response(bytes: Vec<u8>, filename: &str) -> axum::response::Response {
-    use axum::http::{header, HeaderValue};
+    use axum::http::header;
     let mut response = axum::response::Response::new(axum::body::Body::from(bytes));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_static("application/zip"),
+        header::HeaderValue::from_static("application/zip"),
     );
-    response.headers_mut().insert(
-        header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
-            .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
-    );
+    response
+        .headers_mut()
+        .insert(header::CONTENT_DISPOSITION, attachment_header(filename));
     response
 }
 

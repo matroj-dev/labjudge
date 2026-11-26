@@ -33,56 +33,65 @@ pub struct TestApp {
 
 impl TestApp {
     pub fn new() -> Self {
-        Self::build(Config::for_test())
+        Self::build(Config::for_test(), "demo")
+    }
+
+    /// 用指定比赛目录名搭测试环境，用于验证中文 ID 等路径。
+    pub fn with_contest_id(contest_id: &str) -> Self {
+        Self::build(Config::for_test(), contest_id)
     }
 
     /// 默认配置有 5 秒提交冷却；需要连着提交同一题时用这个。
     pub fn without_submit_cooldown() -> Self {
         let mut config = Config::for_test();
         config.submit_cooldown_seconds = 0;
-        Self::build(config)
+        Self::build(config, "demo")
     }
 
-    fn build(config: Config) -> Self {
+    fn build(config: Config, contest_id: &str) -> Self {
         let root = tempfile::tempdir().unwrap();
         let contests = root.path().join("contests");
-        let demo = contests.join("demo");
+        let contest_dir = contests.join(contest_id);
         write(
-            &demo.join("contest.json"),
+            &contest_dir.join("contest.json"),
             r#"{"title":"M2 测试赛","durationMinutes":60,"leaderboardVisible":false}"#,
         );
         write(
-            &demo.join("students.csv"),
+            &contest_dir.join("students.csv"),
             "name,student_id,password,school,grade\n张三,2026001,p1,第一中学,七年级\n张三,2026002,p2,第二中学,八年级\n李四,2026003,p3,,,\n",
         );
         write(
-            &demo.join("problems/A/problem.json"),
+            &contest_dir.join("problems/A/problem.json"),
             r#"{"title":"两数之和","timeLimitMs":1000,"memoryLimitMb":256,"fullScore":100}"#,
         );
         write(
-            &demo.join("problems/A/statement.md"),
+            &contest_dir.join("problems/A/statement.md"),
             "# A 题\n\n公式 $a+b$。\n\n<script>alert(1)</script>\n\n![图](images/example.png)\n",
         );
-        write(&demo.join("problems/A/testdata/1.in"), "3 4");
-        write(&demo.join("problems/A/testdata/1.out"), "7");
-        fs::create_dir_all(demo.join("problems/A/images")).unwrap();
+        write(&contest_dir.join("problems/A/testdata/1.in"), "3 4");
+        write(&contest_dir.join("problems/A/testdata/1.out"), "7");
+        fs::create_dir_all(contest_dir.join("problems/A/images")).unwrap();
         fs::write(
-            demo.join("problems/A/images/example.png"),
+            contest_dir.join("problems/A/images/example.png"),
             [0x89, b'P', b'N', b'G', 0, 1, 2, 3],
         )
         .unwrap();
-        fs::write(demo.join("problems/A/images/bad.svg"), b"<svg></svg>").unwrap();
+        fs::write(
+            contest_dir.join("problems/A/images/bad.svg"),
+            b"<svg></svg>",
+        )
+        .unwrap();
 
         write(
-            &demo.join("problems/B/problem.json"),
+            &contest_dir.join("problems/B/problem.json"),
             r#"{"title":"数列","timeLimitMs":2000,"memoryLimitMb":128,"fullScore":100}"#,
         );
         write(
-            &demo.join("problems/B/statement.md"),
+            &contest_dir.join("problems/B/statement.md"),
             "# B 题\n\n普通题面。\n",
         );
-        write(&demo.join("problems/B/testdata/1.in"), "1");
-        write(&demo.join("problems/B/testdata/1.out"), "1");
+        write(&contest_dir.join("problems/B/testdata/1.in"), "1");
+        write(&contest_dir.join("problems/B/testdata/1.out"), "1");
 
         fs::create_dir_all(contests.join("bad id")).unwrap();
 
@@ -95,7 +104,7 @@ impl TestApp {
             _root: root,
             state,
             router,
-            contest_id: "demo".to_string(),
+            contest_id: contest_id.to_string(),
         }
     }
 
@@ -180,7 +189,11 @@ impl TestApp {
         let mut headers = HeaderMap::new();
         headers.insert(
             header::COOKIE,
-            HeaderValue::from_str(&format!("lc_s_{}={token}", self.contest_id)).unwrap(),
+            HeaderValue::from_str(&format!(
+                "{}={token}",
+                labjudge::auth::session::student_cookie_name(&self.contest_id)
+            ))
+            .unwrap(),
         );
         let csrf = self.state.csrf.for_session(&token);
         (headers, csrf)

@@ -30,13 +30,15 @@ pub fn load_json<T: DeserializeOwned>(path: &Path) -> Result<T, PackageError> {
     })
 }
 
+/// 比赛 ID（目录名）允许中英文字母、数字，以及 `.` `_` `-`；
+/// 首字符必须是字母或数字，避免 `.`、`..` 或隐藏目录被当成比赛。
 pub fn is_valid_contest_id(id: &str) -> bool {
-    let mut bytes = id.bytes();
-    match bytes.next() {
-        Some(first) if first.is_ascii_alphanumeric() => {}
+    let mut chars = id.chars();
+    match chars.next() {
+        Some(first) if first.is_alphanumeric() => {}
         _ => return false,
     }
-    bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    chars.all(|ch| ch.is_alphanumeric() || matches!(ch, '.' | '_' | '-'))
 }
 
 pub fn is_valid_problem_key(key: &str) -> bool {
@@ -525,6 +527,22 @@ mod tests {
             full_score: Some(100),
             subtasks: None,
             checker: None,
+        }
+    }
+
+    #[test]
+    fn contest_id_accepts_chinese_and_safe_ascii() {
+        for id in ["demo", "2026秋季赛", "中文-比赛_1", "A.1"] {
+            assert!(is_valid_contest_id(id), "{id} 应当合法");
+        }
+    }
+
+    #[test]
+    fn contest_id_rejects_path_and_separator_characters() {
+        for id in [
+            "", ".hidden", "../demo", "a/b", "a\\b", "a~b", "a b", "赛/1",
+        ] {
+            assert!(!is_valid_contest_id(id), "{id} 应当非法");
         }
     }
 

@@ -2,6 +2,8 @@ mod common;
 
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use common::{body_string, cookie_pair, form_body, header_value, TestApp};
+use labjudge::auth::session::student_cookie_name;
+use labjudge::url::segment;
 
 fn anon_join(app: &TestApp) -> (HeaderMap, String) {
     let (cookie, token) = app.anon_csrf();
@@ -25,7 +27,12 @@ async fn join(
         ("password", password),
         ("csrf", token),
     ];
-    app.post("/c/demo/join", headers, form_body(&pairs)).await
+    app.post(
+        &format!("/c/{}/join", segment(&app.contest_id)),
+        headers,
+        form_body(&pairs),
+    )
+    .await
 }
 
 #[tokio::test]
@@ -52,7 +59,7 @@ async fn join_with_correct_password_sets_session_cookie_and_redirects() {
         Some("/c/demo")
     );
     let set_cookie = header_value(&response, header::SET_COOKIE).unwrap();
-    assert!(set_cookie.contains("lc_s_demo="));
+    assert!(set_cookie.contains(&format!("{}=", student_cookie_name(&app.contest_id))));
     assert!(set_cookie.contains("HttpOnly"));
     assert!(set_cookie.contains("SameSite=Lax"));
 
@@ -287,7 +294,7 @@ async fn ended_contest_shows_closed_page_and_blocks_student_routes() {
     let response = app.get("/c/demo", headers.clone()).await;
     assert_eq!(response.status(), StatusCode::OK);
     let set_cookie = header_value(&response, header::SET_COOKIE).unwrap();
-    assert!(set_cookie.contains("lc_s_demo="));
+    assert!(set_cookie.contains(&format!("{}=", student_cookie_name(&app.contest_id))));
     assert!(set_cookie.contains("Max-Age=0"));
     let body = body_string(response).await;
     assert!(body.contains("比赛已结束"));
@@ -376,7 +383,7 @@ async fn logout_clears_student_cookie_with_csrf() {
         Some("/")
     );
     let set_cookie = header_value(&response, header::SET_COOKIE).unwrap();
-    assert!(set_cookie.contains("lc_s_demo="));
+    assert!(set_cookie.contains(&format!("{}=", student_cookie_name(&app.contest_id))));
     assert!(set_cookie.contains("Max-Age=0"));
 
     let response = app.get("/c/demo/_mine", headers).await;
@@ -481,4 +488,31 @@ async fn app_js_contains_countdown_fragment_and_draft_hooks() {
     assert!(body.contains("initEditor"));
     assert!(body.contains("lc:draft:"));
     assert!(body.contains("replaceSelection"));
+}
+
+#[tokio::test]
+async fn chinese_contest_id_works_for_registry_redirect_and_cookie() {
+    let contest_id = "2026秋季赛";
+    let app = TestApp::with_contest_id(contest_id);
+    assert!(app.state.registry.get(contest_id).is_some());
+
+    let encoded = segment(contest_id);
+    assert!(encoded.is_ascii());
+
+    // 未登录访问比赛首页：跳转 Location 头必须能承载中文目录名（编码后）。
+    let response = app.get(&format!("/c/{encoded}"), HeaderMap::new()).await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let expected = format!("/c/{encoded}/join");
+    assert_eq!(
+        header_value(&response, header::LOCATION).as_deref(),
+        Some(expected.as_str())
+    );
+
+    // 登录后 Set-Cookie 名必须是 ASCII；Cookie 名和会话校验仍使用原始中文 ID。
+    let (headers, csrf) = anon_join(&app);
+    let response = join(&app, headers, &csrf, "2026001", "p1").await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let set_cookie = header_value(&response, header::SET_COOKIE).unwrap();
+    assert!(set_cookie.is_ascii());
+    assert!(set_cookie.contains(&format!("{}=", student_cookie_name(contest_id))));
 }

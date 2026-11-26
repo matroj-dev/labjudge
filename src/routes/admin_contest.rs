@@ -18,6 +18,11 @@ use crate::model::Phase;
 use crate::services::registry::{load_contest_package, ContestPackage, ContestRuntime};
 use crate::store::ContestStore;
 use crate::timefmt::{format_local, now_ms};
+use crate::url::segment;
+
+fn redirect_contest(contest_id: &str) -> Response {
+    Redirect::to(&format!("/admin/c/{}", segment(contest_id))).into_response()
+}
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -113,7 +118,7 @@ async fn start(
         .set_state(&contest_state)
         .map_err(|error| AppError::internal(format!("保存比赛状态失败: {error}")))?;
     log(&runtime, "教师开赛");
-    Ok(Redirect::to(&format!("/admin/c/{contest_id}")).into_response())
+    Ok(redirect_contest(&contest_id))
 }
 
 async fn end(
@@ -146,7 +151,7 @@ async fn end(
         .clear_sessions()
         .map_err(|error| AppError::internal(format!("清空学生会话失败: {error}")))?;
     log(&runtime, "教师提前结束");
-    Ok(Redirect::to(&format!("/admin/c/{contest_id}")).into_response())
+    Ok(redirect_contest(&contest_id))
 }
 
 async fn extend(
@@ -179,7 +184,7 @@ async fn extend(
             .map_err(|error| AppError::internal(format!("清空学生会话失败: {error}")))?;
     }
     log(&runtime, &format!("教师延长 {} 分钟", form.minutes));
-    Ok(Redirect::to(&format!("/admin/c/{contest_id}")).into_response())
+    Ok(redirect_contest(&contest_id))
 }
 
 async fn leaderboard(
@@ -211,7 +216,7 @@ async fn leaderboard(
             "教师隐藏榜单"
         },
     );
-    Ok(Redirect::to(&format!("/admin/c/{contest_id}")).into_response())
+    Ok(redirect_contest(&contest_id))
 }
 
 async fn reset(
@@ -266,7 +271,7 @@ async fn reset(
     });
     log(&new_runtime, "教师重置比赛");
     state.registry.insert_runtime(new_runtime);
-    Ok(Redirect::to(&format!("/admin/c/{contest_id}")).into_response())
+    Ok(redirect_contest(&contest_id))
 }
 
 /// 重新加载题包时也要重编 checker：加载阶段就是唯一的编译时机。
@@ -328,7 +333,7 @@ async fn reload(
         package: Arc::new(package),
         store: runtime.store.clone(),
     }));
-    Ok(Redirect::to(&format!("/admin/c/{contest_id}")).into_response())
+    Ok(redirect_contest(&contest_id))
 }
 
 async fn rejudge_all(
@@ -362,5 +367,5 @@ async fn rejudge_all(
         }
     }
     log(&runtime, &format!("教师全部重测 {} 条", rows.len()));
-    Ok(Redirect::to(&format!("/admin/c/{contest_id}")).into_response())
+    Ok(redirect_contest(&contest_id))
 }

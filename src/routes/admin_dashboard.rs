@@ -17,6 +17,7 @@ use crate::contest::lifecycle::phase;
 use crate::model::Phase;
 use crate::services::registry::ContestRuntime;
 use crate::timefmt::{format_local, now_ms};
+use crate::url::segment;
 use crate::views::admin::{
     AdminContestItem, AdminContestTemplate, AdminDashboardTemplate, AdminInvalidItem,
     AdminMonitorTemplate, AdminProblemItem, AdminRecentItem, AdminRecentTemplate, AdminRosterItem,
@@ -156,12 +157,13 @@ async fn contest_detail(
     let roster_count = roster.len();
 
     let monitor_html = render_judge_status(&state, &runtime)?;
-    let monitor_url = format!("/admin/c/{contest_id}/_monitor");
+    let contest = segment(&contest_id);
+    let monitor_url = format!("/admin/c/{contest}/_monitor");
     let recent_html = render_recent(&runtime)?;
-    let recent_url = format!("/admin/c/{contest_id}/_recent");
+    let recent_url = format!("/admin/c/{contest}/_recent");
     // 教师端始终能看到完整榜单，不受「榜单公开」开关影响。
     let rank_html = super::fragments::rank_html(&runtime, true)?;
-    let rank_url = format!("/admin/c/{contest_id}/_rank");
+    let rank_url = format!("/admin/c/{contest}/_rank");
 
     Ok(render_html(AdminContestTemplate {
         contest_id,

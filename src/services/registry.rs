@@ -76,7 +76,8 @@ pub fn scan_contests(contests_dir: &Path) -> ScanReport {
             report.invalid.push(InvalidContest {
                 id: id.clone(),
                 path,
-                reason: "比赛 ID 非法（只允许字母数字与 ._-，且首字符为字母数字）".to_string(),
+                reason: "比赛 ID 非法（只允许中英文字母、数字与 ._-，且首字符为字母或数字）"
+                    .to_string(),
             });
             continue;
         }

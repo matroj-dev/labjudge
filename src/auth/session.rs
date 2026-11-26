@@ -162,8 +162,10 @@ pub fn new_session_id() -> String {
     hex::encode(bytes)
 }
 
+/// Cookie 名必须是 ASCII token，中文比赛 ID 直接拼进去会让 `Set-Cookie` 头非法。
+/// 统一用 UTF-8 字节的 hex 作为后缀：对所有合法 ID 都是 ASCII，且不会互相碰撞。
 pub fn student_cookie_name(contest_id: &str) -> String {
-    format!("lc_s_{contest_id}")
+    format!("lc_s_{}", hex::encode(contest_id.as_bytes()))
 }
 
 pub fn read_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -248,6 +250,16 @@ mod tests {
             signer.verify_admin("v1.bad", 0),
             Err(AuthError::Malformed)
         ));
+    }
+
+    #[test]
+    fn student_cookie_name_is_ascii_for_chinese_ids() {
+        assert_eq!(student_cookie_name("demo"), "lc_s_64656d6f");
+        let name = student_cookie_name("2026秋季赛");
+        assert!(name.is_ascii());
+        assert!(name.starts_with("lc_s_"));
+        assert_ne!(name, student_cookie_name("2026春季赛"));
+        assert!(build_cookie(&name, "token", 3600).to_str().is_ok());
     }
 
     #[test]

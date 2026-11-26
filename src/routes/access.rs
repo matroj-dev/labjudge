@@ -13,6 +13,7 @@ use crate::contest::lifecycle::{phase, ContestState};
 use crate::model::Phase;
 use crate::services::registry::ContestRuntime;
 use crate::timefmt::now_ms;
+use crate::url::segment;
 
 pub fn contest_or_error(
     state: &AppState,
@@ -146,10 +147,11 @@ pub fn no_store_html(html: String) -> Response {
 }
 
 pub fn redirect_join(contest_id: &str, stale: bool) -> Response {
+    let contest = segment(contest_id);
     if stale {
-        Redirect::to(&format!("/c/{contest_id}/join?reason=invalid")).into_response()
+        Redirect::to(&format!("/c/{contest}/join?reason=invalid")).into_response()
     } else {
-        Redirect::to(&format!("/c/{contest_id}/join")).into_response()
+        Redirect::to(&format!("/c/{contest}/join")).into_response()
     }
 }
 

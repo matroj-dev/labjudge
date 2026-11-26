@@ -29,10 +29,15 @@ use crate::paths;
 use crate::services::registry::ContestRuntime;
 use crate::store::NewSubmission;
 use crate::timefmt::{format_local, now_ms};
+use crate::url::segment;
 use crate::views::student::{
     format_remaining, phase_label, AllProblemsTemplate, ContestListItem, ContestListTemplate,
     EndedTemplate, HomeTemplate, JoinTemplate, ProblemListItem, ProblemTemplate, StatementView,
 };
+
+fn contest_home_url(contest_id: &str) -> String {
+    format!("/c/{}", segment(contest_id))
+}
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -82,7 +87,7 @@ async fn join_get(
         return ended_page(&runtime);
     }
     if current_student(&state, &headers, &contest_id, false)?.is_some() {
-        return Ok(Redirect::to(&format!("/c/{contest_id}")).into_response());
+        return Ok(Redirect::to(&contest_home_url(&contest_id)).into_response());
     }
 
     let notice = if query.reason.as_deref() == Some("invalid") {
@@ -164,7 +169,7 @@ async fn join_post(
         .session
         .sign_student(&contest_id, &student.student_id, &session_id, now);
 
-    let mut response = Redirect::to(&format!("/c/{contest_id}")).into_response();
+    let mut response = Redirect::to(&contest_home_url(&contest_id)).into_response();
     response.headers_mut().append(
         header::SET_COOKIE,
         build_cookie(&student_cookie_name(&contest_id), &token, SESSION_SECONDS),
@@ -267,9 +272,9 @@ async fn home(
             .ends_at
             .map(format_local)
             .unwrap_or_else(|| "—".to_string()),
-        mine_url: format!("/c/{contest_id}/_mine"),
+        mine_url: format!("{}/_mine", contest_home_url(&contest_id)),
         mine_html,
-        rank_url: format!("/c/{contest_id}/_rank"),
+        rank_url: format!("{}/_rank", contest_home_url(&contest_id)),
         rank_html,
     };
     Ok(render_html(html)?.into_response())
@@ -313,14 +318,14 @@ async fn all_problems(
 ) -> Result<Response, AppError> {
     let runtime = contest_or_error(&state, &contest_id, false)?;
     if contest_phase(&runtime)? == Phase::Ended {
-        return Ok(Redirect::to(&format!("/c/{contest_id}")).into_response());
+        return Ok(Redirect::to(&contest_home_url(&contest_id)).into_response());
     }
     let Some((runtime, session)) = current_student(&state, &headers, &contest_id, false)? else {
         let stale = has_student_cookie(&headers, &contest_id);
         return Ok(redirect_join(&contest_id, stale));
     };
     if !contest_started(&runtime)? {
-        return Ok(Redirect::to(&format!("/c/{contest_id}")).into_response());
+        return Ok(Redirect::to(&contest_home_url(&contest_id)).into_response());
     }
     let problems = statement_views(&contest_id, &runtime)?;
     let html = AllProblemsTemplate {
@@ -340,7 +345,7 @@ async fn problem_page(
 ) -> Result<Response, AppError> {
     let runtime = contest_or_error(&state, &contest_id, false)?;
     if contest_phase(&runtime)? == Phase::Ended {
-        return Ok(Redirect::to(&format!("/c/{contest_id}")).into_response());
+        return Ok(Redirect::to(&contest_home_url(&contest_id)).into_response());
     }
     let Some((runtime, session)) = current_student(&state, &headers, &contest_id, false)? else {
         let stale = has_student_cookie(&headers, &contest_id);
@@ -350,7 +355,7 @@ async fn problem_page(
         return Err(AppError::not_found("题目不存在"));
     };
     if !contest_started(&runtime)? {
-        return Ok(Redirect::to(&format!("/c/{contest_id}")).into_response());
+        return Ok(Redirect::to(&contest_home_url(&contest_id)).into_response());
     }
     let statement = read_statement(&contest_id, problem)?;
     let contest_state = runtime
@@ -382,7 +387,7 @@ async fn problem_page(
         submit_disabled,
         submit_hint,
         submitted: query.submitted.as_deref() == Some("1"),
-        mine_url: format!("/c/{contest_id}#me"),
+        mine_url: format!("{}#me", contest_home_url(&contest_id)),
     };
     Ok(render_html(html)?.into_response())
 }
@@ -424,7 +429,7 @@ async fn submit(
         .map_err(|error| AppError::internal(format!("读取比赛状态失败: {error}")))?;
     let current_phase = phase(&contest_state, now);
     if current_phase == Phase::Ended {
-        return Ok(Redirect::to(&format!("/c/{contest_id}")).into_response());
+        return Ok(Redirect::to(&contest_home_url(&contest_id)).into_response());
     }
     if current_phase != Phase::Running {
         return Err(AppError::bad_request("比赛尚未开始"));
@@ -525,8 +530,9 @@ async fn submit(
     }
 
     Ok(Redirect::to(&format!(
-        "/c/{contest_id}/p/{}?submitted=1",
-        form.problem_key
+        "{}/p/{}?submitted=1",
+        contest_home_url(&contest_id),
+        segment(&form.problem_key)
     ))
     .into_response())
 }

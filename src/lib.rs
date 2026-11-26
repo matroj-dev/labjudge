@@ -16,5 +16,6 @@ pub mod scoring;
 pub mod services;
 pub mod store;
 pub mod timefmt;
+pub mod url;
 pub mod views;
 pub mod win;

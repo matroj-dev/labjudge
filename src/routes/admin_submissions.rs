@@ -14,6 +14,7 @@ use crate::app_state::AppState;
 use crate::model::SubmissionStatus;
 use crate::services::registry::ContestRuntime;
 use crate::timefmt::{format_local, now_ms};
+use crate::url::segment;
 use crate::views::admin::{AdminSubmissionRow, AdminSubmissionTemplate, AdminSubmissionsTemplate};
 use crate::views::fragments::{status_label, submission_view_raw};
 
@@ -159,7 +160,7 @@ async fn rejudge(
         return Err(AppError::internal("判题队列已关闭"));
     }
     log(&runtime, &format!("教师单条重测提交 {id}"));
-    Ok(Redirect::to(&format!("/admin/s/{sid}")).into_response())
+    Ok(Redirect::to(&format!("/admin/s/{}", segment(&sid))).into_response())
 }
 
 async fn delete(
@@ -192,7 +193,11 @@ async fn delete(
         .map_err(|error| AppError::internal(format!("删除提交失败: {error}")))?;
     let _ = fs::remove_file(&row.source_path);
     log(&runtime, &format!("教师删除提交 {id}"));
-    Ok(Redirect::to(&format!("/admin/c/{}/submissions", row.contest_id)).into_response())
+    Ok(Redirect::to(&format!(
+        "/admin/c/{}/submissions",
+        segment(&row.contest_id)
+    ))
+    .into_response())
 }
 
 fn parse_sid(

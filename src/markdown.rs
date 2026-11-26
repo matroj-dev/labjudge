@@ -1,17 +1,6 @@
-use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag};
 
-const PATH_ENCODE: &AsciiSet = &CONTROLS
-    .add(b' ')
-    .add(b'"')
-    .add(b'#')
-    .add(b'%')
-    .add(b'<')
-    .add(b'>')
-    .add(b'?')
-    .add(b'`')
-    .add(b'{')
-    .add(b'}');
+use crate::url::segment;
 
 pub struct StatementCtx<'a> {
     pub contest_id: &'a str,
@@ -329,14 +318,13 @@ fn rewrite_destination(dest: &str, ctx: &StatementCtx<'_>, image: bool) -> Strin
     }
 
     let (path, suffix) = split_suffix(dest);
-    let encoded = path
-        .split('/')
-        .map(|segment| utf8_percent_encode(segment, PATH_ENCODE).to_string())
-        .collect::<Vec<_>>()
-        .join("/");
+    let encoded = path.split('/').map(segment).collect::<Vec<_>>().join("/");
     format!(
         "/c/{}/p/{}/files/{}{}",
-        ctx.contest_id, ctx.problem_key, encoded, suffix
+        segment(ctx.contest_id),
+        segment(ctx.problem_key),
+        encoded,
+        suffix
     )
 }
 
