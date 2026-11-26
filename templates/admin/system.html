@@ -37,6 +37,15 @@
 </section>
 
 <section class="card stack">
+  <h2>安全边界</h2>
+  <p class="muted">
+    本工具面向受控教室，默认信任学生。Windows 版不提供代码沙箱：学生代码在教师机运行，
+    可能读取教师机文件或联网；学生端的编译输出过滤只影响显示，不是隔离。
+    请只在教师可监督、学生可信的教室使用；高利害或不可信环境请改用带沙箱的 Linux 判题环境。
+  </p>
+</section>
+
+<section class="card stack">
   <h2>修改管理口令</h2>
   <form class="inline-form" method="post" action="/admin/password">
     <input type="hidden" name="csrf" value="{{ csrf }}">

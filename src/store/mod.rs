@@ -9,6 +9,7 @@ use thiserror::Error;
 
 pub mod contest;
 pub mod participants;
+pub mod sessions;
 pub mod submissions;
 
 pub use participants::ParticipantRow;
@@ -115,6 +116,14 @@ CREATE TABLE IF NOT EXISTS participants (
     grade TEXT NOT NULL DEFAULT '',
     last_seen_at INTEGER NOT NULL,
     joined_at INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (contest_id, student_id)
+);
+
+CREATE TABLE IF NOT EXISTS student_sessions (
+    contest_id TEXT NOT NULL,
+    student_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
     PRIMARY KEY (contest_id, student_id)
 );
 

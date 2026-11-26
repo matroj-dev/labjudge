@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+
+{% block title %}比赛已结束 - {{ contest_title }}{% endblock %}
+
+{% block content %}
+<section class="card stack">
+  <h1>{{ contest_title }}</h1>
+  <p>比赛已结束，学生端不再开放。</p>
+  <p class="muted">如需查看自己的提交或成绩，请联系老师。</p>
+  <p><a href="/">返回比赛列表</a></p>
+</section>
+{% endblock %}

@@ -160,7 +160,7 @@ fn execute(run_dir: &Path, base: &str, probe: &Session, no_reset: bool) -> Resul
             "/c/sample-contest/join",
             &[
                 ("student_id", "110101200001011234"),
-                ("password", "011234"),
+                ("password", "Q7m4K2x9"),
                 ("csrf", join_csrf.as_str()),
             ],
         )?

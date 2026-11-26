@@ -255,7 +255,7 @@ mod tests {
         );
         write(
             &contest.join("students.csv"),
-            "name,student_id,school,grade\n张三,2026001,第一中学,七年级\n",
+            "name,student_id,password,school,grade\n张三,2026001,pw,第一中学,七年级\n",
         );
         make_problem(&contest, "A");
         make_problem(&contest, "B");
@@ -338,7 +338,10 @@ mod tests {
             &contest.join("contest.json"),
             r#"{"title":"t","durationMinutes":60,"problems":[{"key":"A","dir":"../../outside"}]}"#,
         );
-        write(&contest.join("students.csv"), "name,student_id\n张三,1\n");
+        write(
+            &contest.join("students.csv"),
+            "name,student_id,password\n张三,1,p\n",
+        );
         fs::create_dir_all(base.path().join("outside")).unwrap();
         let report = scan_contests(&contests);
         assert_eq!(report.invalid.len(), 1);
@@ -348,7 +351,10 @@ mod tests {
             &contest.join("contest.json"),
             r#"{"title":"t","durationMinutes":60,"problems":[{"key":"A","dir":"problems/A"}]}"#,
         );
-        write(&contest.join("students.csv"), "name,student_id\n张三,1\n");
+        write(
+            &contest.join("students.csv"),
+            "name,student_id,password\n张三,1,p\n",
+        );
         write(
             &contest.join("problems/A/problem.json"),
             r#"{"title":"A","timeLimitMs":1000,"memoryLimitMb":256,"fullScore":100}"#,

@@ -82,6 +82,19 @@ struct CaseJson {
 }
 
 pub fn submission_view(row: &SubmissionRow, visible: bool) -> SubmissionView {
+    submission_view_with_compile(row, visible, true)
+}
+
+/// 管理端保留完整编译输出，便于排查；学生端只看 main.cpp 的诊断。
+pub fn submission_view_raw(row: &SubmissionRow, visible: bool) -> SubmissionView {
+    submission_view_with_compile(row, visible, false)
+}
+
+fn submission_view_with_compile(
+    row: &SubmissionRow,
+    visible: bool,
+    filter_compile: bool,
+) -> SubmissionView {
     let status_label = status_label(row.status).to_string();
     let mut view = SubmissionView {
         id: row.id,
@@ -104,7 +117,11 @@ pub fn submission_view(row: &SubmissionRow, visible: bool) -> SubmissionView {
         .map(|verdict| verdict.as_str().to_string())
         .unwrap_or_else(|| "-".to_string());
     view.score = row.score;
-    view.compile_output = row.compile_output.clone().unwrap_or_default();
+    view.compile_output = match &row.compile_output {
+        Some(output) if filter_compile => sanitize_compile_output(output),
+        Some(output) => output.clone(),
+        None => String::new(),
+    };
     view.has_compile_output = !view.compile_output.is_empty();
     view.error = row.error.clone().unwrap_or_default();
 
@@ -142,6 +159,38 @@ pub fn submission_view(row: &SubmissionRow, visible: bool) -> SubmissionView {
     view
 }
 
+/// 只保留学生自己 main.cpp 的诊断行，避免把被包含文件的内容带回浏览器。
+fn sanitize_compile_output(raw: &str) -> String {
+    let mut kept = Vec::new();
+    let mut omitted = false;
+    for line in raw.lines() {
+        if line.chars().next().is_some_and(char::is_whitespace) {
+            continue;
+        }
+        if line.contains("In file included from") {
+            omitted = true;
+            continue;
+        }
+        if line.contains("main.cpp:") {
+            kept.push(line);
+        } else if !line.trim().is_empty() {
+            omitted = true;
+        }
+    }
+    if kept.is_empty() {
+        return if raw.trim().is_empty() {
+            String::new()
+        } else {
+            "编译错误（详细信息位于标准库或其他文件，已省略）".to_string()
+        };
+    }
+    let mut text = kept.join("\n");
+    if omitted {
+        text.push_str("\n（已省略标准库/其他文件的诊断）");
+    }
+    text
+}
+
 pub fn status_label(status: SubmissionStatus) -> &'static str {
     match status {
         SubmissionStatus::Queued => "已提交",
@@ -172,7 +221,7 @@ mod tests {
                 r#"[{"name":"1","subtask":"小数据","verdict":"AC","time_ms":12,"memory_kb":1024,"score":50,"max_score":50}]"#
                     .to_string(),
             ),
-            compile_output: Some("CE_SECRET_987654".to_string()),
+            compile_output: Some("main.cpp:1:1: error: CE_SECRET_987654".to_string()),
             error: None,
             created_at: 0,
             judged_at: Some(1),
@@ -195,11 +244,31 @@ mod tests {
         let view = submission_view(&row(), true);
         assert_eq!(view.verdict_label, "AC");
         assert_eq!(view.score, 987654);
-        assert_eq!(view.compile_output, "CE_SECRET_987654");
+        assert_eq!(view.compile_output, "main.cpp:1:1: error: CE_SECRET_987654");
         assert_eq!(view.groups.len(), 1);
         assert_eq!(view.groups[0].name, "小数据");
         assert_eq!(view.groups[0].score, 50);
         assert_eq!(view.groups[0].cases.len(), 1);
+    }
+
+    #[test]
+    fn student_compile_output_drops_included_files() {
+        let mut row = row();
+        row.compile_output = Some(
+            "In file included from main.cpp:1:\n\
+             ../../../../config.json:1:1: error: SECRET\n\
+             main.cpp:3:5: error: expected ';'\n\
+             \x20    int x = 1\n\
+             \x20        ^\n"
+                .to_string(),
+        );
+        let view = submission_view(&row, true);
+        assert!(view.compile_output.contains("main.cpp:3:5"));
+        assert!(!view.compile_output.contains("SECRET"));
+        assert!(!view.compile_output.contains("int x = 1"));
+
+        let raw = submission_view_raw(&row, true);
+        assert!(raw.compile_output.contains("SECRET"));
     }
 
     #[test]

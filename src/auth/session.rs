@@ -1,6 +1,7 @@
 use axum::http::{header, HeaderMap, HeaderValue};
 use cookie::{Cookie, SameSite};
 use hmac::{Hmac, Mac};
+use rand::RngCore;
 use sha2::Sha256;
 use thiserror::Error;
 
@@ -28,6 +29,7 @@ pub enum AuthError {
 pub struct StudentSession {
     pub contest_id: String,
     pub student_id: String,
+    pub session_id: String,
     pub exp_ms: i64,
     pub token: String,
 }
@@ -54,14 +56,21 @@ impl SessionSigner {
         self.key
     }
 
-    pub fn sign_student(&self, contest_id: &str, student_id: &str, now_ms: i64) -> String {
+    pub fn sign_student(
+        &self,
+        contest_id: &str,
+        student_id: &str,
+        session_id: &str,
+        now_ms: i64,
+    ) -> String {
         let exp_ms = now_ms + SESSION_SECONDS * 1000;
-        let payload = format!("v1|student|{contest_id}|{student_id}|{exp_ms}");
+        let payload = format!("v1|student|{contest_id}|{student_id}|{session_id}|{exp_ms}");
         let mac = hex::encode(self.mac(payload.as_bytes()));
         format!(
-            "v1.{}.{}.{}.{}",
+            "v1.{}.{}.{}.{}.{}",
             hex::encode(contest_id.as_bytes()),
             hex::encode(student_id.as_bytes()),
+            hex::encode(session_id.as_bytes()),
             exp_ms,
             mac
         )
@@ -74,25 +83,27 @@ impl SessionSigner {
         now_ms: i64,
     ) -> Result<StudentSession, AuthError> {
         let parts = token.split('.').collect::<Vec<_>>();
-        if parts.len() != 5 || parts[0] != "v1" {
+        if parts.len() != 6 || parts[0] != "v1" {
             return Err(AuthError::Malformed);
         }
         let contest = decode_hex_string(parts[1])?;
         let student_id = decode_hex_string(parts[2])?;
-        let exp_ms = parts[3].parse::<i64>().map_err(|_| AuthError::Malformed)?;
+        let session_id = decode_hex_string(parts[3])?;
+        let exp_ms = parts[4].parse::<i64>().map_err(|_| AuthError::Malformed)?;
         if contest != contest_id {
             return Err(AuthError::ContestMismatch);
         }
         if exp_ms <= now_ms {
             return Err(AuthError::Expired);
         }
-        let payload = format!("v1|student|{contest}|{student_id}|{exp_ms}");
-        if !self.verify_mac(payload.as_bytes(), parts[4]) {
+        let payload = format!("v1|student|{contest}|{student_id}|{session_id}|{exp_ms}");
+        if !self.verify_mac(payload.as_bytes(), parts[5]) {
             return Err(AuthError::BadSignature);
         }
         Ok(StudentSession {
             contest_id: contest,
             student_id,
+            session_id,
             exp_ms,
             token: token.to_string(),
         })
@@ -145,6 +156,12 @@ fn decode_hex_string(value: &str) -> Result<String, AuthError> {
     String::from_utf8(bytes).map_err(|_| AuthError::Malformed)
 }
 
+pub fn new_session_id() -> String {
+    let mut bytes = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    hex::encode(bytes)
+}
+
 pub fn student_cookie_name(contest_id: &str) -> String {
     format!("lc_s_{contest_id}")
 }
@@ -192,10 +209,11 @@ mod tests {
     #[test]
     fn session_round_trip_and_tamper_detection() {
         let signer = signer();
-        let token = signer.sign_student("demo", "2026001", 1000);
+        let token = signer.sign_student("demo", "2026001", "sid-1", 1000);
         let session = signer.verify_student(&token, "demo", 2000).unwrap();
         assert_eq!(session.student_id, "2026001");
         assert_eq!(session.contest_id, "demo");
+        assert_eq!(session.session_id, "sid-1");
         assert_eq!(session.token, token);
 
         let mut tampered = token.clone();
@@ -210,7 +228,7 @@ mod tests {
     #[test]
     fn session_expires() {
         let signer = signer();
-        let token = signer.sign_student("demo", "1", 1000);
+        let token = signer.sign_student("demo", "1", "sid", 1000);
         assert!(matches!(
             signer.verify_student(&token, "demo", 1000 + SESSION_SECONDS * 1000 + 1),
             Err(AuthError::Expired)

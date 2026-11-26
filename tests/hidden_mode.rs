@@ -13,7 +13,7 @@ async fn hidden_mode_never_leaks_verdict_score_cases_or_compile_output() {
         "A",
         Verdict::Ac,
         987654,
-        Some("CE_SECRET_987654"),
+        Some("main.cpp:1:1: error: CE_SECRET_987654"),
     );
     let headers = app.student_headers("2026001");
 
@@ -45,7 +45,7 @@ async fn public_mode_shows_verdict_score_subtasks_and_compile_output() {
         "A",
         Verdict::Ac,
         987654,
-        Some("CE_SECRET_987654"),
+        Some("main.cpp:1:1: error: CE_SECRET_987654"),
     );
     app.set_leaderboard_visible(true);
     let headers = app.student_headers("2026001");

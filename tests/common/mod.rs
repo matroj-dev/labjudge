@@ -43,7 +43,7 @@ impl TestApp {
         );
         write(
             &demo.join("students.csv"),
-            "name,student_id,school,grade\n张三,2026001,第一中学,七年级\n张三,2026002,第二中学,八年级\n李四,2026003,,,\n",
+            "name,student_id,password,school,grade\n张三,2026001,p1,第一中学,七年级\n张三,2026002,p2,第二中学,八年级\n李四,2026003,p3,,,\n",
         );
         write(
             &demo.join("problems/A/problem.json"),
@@ -142,9 +142,24 @@ impl TestApp {
     }
 
     pub fn student_token(&self, student_id: &str) -> String {
+        let runtime = self.state.registry.get(&self.contest_id).unwrap();
+        if let Some(student) = runtime
+            .package
+            .roster
+            .students()
+            .iter()
+            .find(|student| student.student_id == student_id)
+        {
+            runtime.store.upsert_participant(student, now_ms()).unwrap();
+        }
+        let session_id = labjudge::auth::session::new_session_id();
+        runtime
+            .store
+            .upsert_session(student_id, &session_id, now_ms())
+            .unwrap();
         self.state
             .session
-            .sign_student(&self.contest_id, student_id, now_ms())
+            .sign_student(&self.contest_id, student_id, &session_id, now_ms())
     }
 
     pub fn student_headers(&self, student_id: &str) -> HeaderMap {
@@ -192,6 +207,16 @@ impl TestApp {
         let store = self.store();
         let mut state = store.state().unwrap();
         let _ = apply_end(&mut state, now_ms());
+        store.set_state(&state).unwrap();
+    }
+
+    pub fn expire_contest(&self) {
+        let store = self.store();
+        let mut state = store.state().unwrap();
+        let now = now_ms();
+        state.started_at = Some(now - 60_000);
+        state.ends_at = Some(now - 1_000);
+        state.ended_early = false;
         store.set_state(&state).unwrap();
     }
 

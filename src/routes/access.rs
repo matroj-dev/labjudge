@@ -45,6 +45,14 @@ pub fn current_student(
         return Ok(None);
     };
 
+    let current_session = runtime
+        .store
+        .session_id(&session.student_id)
+        .map_err(|error| AppError::internal(format!("读取会话失败: {error}")))?;
+    if current_session.as_deref() != Some(session.session_id.as_str()) {
+        return Ok(None);
+    }
+
     if !runtime
         .package
         .roster
@@ -56,7 +64,6 @@ pub fn current_student(
     }
 
     // 参赛记录在 join 时写入；之后只是刷新「最近活动」，10 秒内不重复写库。
-    // 记录被「重新加载」清掉后（学生会话仍然有效），这里补写一次。
     let touched = runtime
         .store
         .touch_participant_throttled(&session.student_id, now, 10_000)
@@ -67,22 +74,19 @@ pub fn current_student(
             .participant(&session.student_id)
             .map_err(|error| AppError::internal(format!("读取参赛记录失败: {error}")))?;
         if existing.is_none() {
-            if let Some(student) = runtime
-                .package
-                .roster
-                .students()
-                .iter()
-                .find(|student| student.student_id == session.student_id)
-            {
-                runtime
-                    .store
-                    .upsert_participant(student, now)
-                    .map_err(|error| AppError::internal(format!("更新参赛记录失败: {error}")))?;
-            }
+            return Ok(None);
         }
     }
 
     Ok(Some((runtime, session)))
+}
+
+pub fn contest_phase(runtime: &ContestRuntime) -> Result<Phase, AppError> {
+    runtime
+        .store
+        .state()
+        .map(|state| phase(&state, now_ms()))
+        .map_err(|error| AppError::internal(format!("读取比赛状态失败: {error}")))
 }
 
 pub fn student_name(runtime: &ContestRuntime, student_id: &str) -> String {
@@ -119,11 +123,23 @@ pub fn remaining_seconds(state: &ContestState, now_ms: i64) -> u64 {
         .unwrap_or(0)
 }
 
-pub fn render_html<T: Template>(template: T) -> Result<Html<String>, AppError> {
-    template
+pub fn render_html<T: Template>(template: T) -> Result<Response, AppError> {
+    let html = template
         .render()
-        .map(Html)
-        .map_err(|error| AppError::internal(format!("页面渲染失败: {error}")))
+        .map_err(|error| AppError::internal(format!("页面渲染失败: {error}")))?;
+    let mut response = Html(html).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
+pub fn no_store_html(html: String) -> Response {
+    let mut response = Html(html).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
 pub fn redirect_join(contest_id: &str) -> Response {

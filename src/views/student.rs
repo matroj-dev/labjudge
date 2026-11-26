@@ -26,6 +26,15 @@ pub struct JoinTemplate {
     /// 出错时回填账号，口令不回填。
     pub student_id: String,
     pub error: String,
+    /// 会话被其他设备替换等原因导致的提示。
+    pub notice: String,
+}
+
+#[derive(Template)]
+#[template(path = "student/ended.html")]
+pub struct EndedTemplate {
+    pub contest_id: String,
+    pub contest_title: String,
 }
 
 #[derive(Template)]

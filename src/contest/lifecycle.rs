@@ -53,9 +53,7 @@ pub fn apply_end(state: &mut ContestState, now_ms: i64) -> Result<(), LifecycleE
     if state.started_at.is_none() {
         return Err(LifecycleError::NotStarted);
     }
-    if state.ends_at.is_none() {
-        state.ends_at = Some(now_ms);
-    }
+    state.ends_at = Some(now_ms);
     state.ended_early = true;
     Ok(())
 }
@@ -71,7 +69,11 @@ pub fn apply_extend(
     if !(1..=600).contains(&minutes) {
         return Err(LifecycleError::InvalidExtendMinutes);
     }
-    let base = now_ms.max(state.ends_at.unwrap_or(now_ms));
+    let base = if state.ended_early {
+        now_ms
+    } else {
+        now_ms.max(state.ends_at.unwrap_or(now_ms))
+    };
     state.ends_at = Some(base + i64::from(minutes) * MINUTE_MS);
     state.ended_early = false;
     Ok(())
@@ -133,10 +135,21 @@ mod tests {
         assert!(!state.ended_early);
 
         apply_end(&mut state, 10_000).unwrap();
+        assert_eq!(state.ends_at, Some(10_000));
         apply_extend(&mut state, 5_000_000, 5).unwrap();
         assert_eq!(state.ends_at, Some(5_000_000 + 300_000));
         assert_eq!(phase(&state, 5_000_001), Phase::Running);
         assert!(!state.ended_early);
+    }
+
+    #[test]
+    fn resume_before_original_end_uses_now_as_base() {
+        let mut state = ContestState::default();
+        apply_start(&mut state, 0, 60).unwrap();
+        apply_end(&mut state, 600_000).unwrap();
+        apply_extend(&mut state, 1_000_000, 5).unwrap();
+        assert_eq!(state.ends_at, Some(1_300_000));
+        assert_eq!(phase(&state, 1_000_001), Phase::Running);
     }
 
     #[test]

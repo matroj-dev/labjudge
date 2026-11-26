@@ -45,7 +45,7 @@ async fn contest_list_shows_only_valid_contests() {
 async fn join_with_correct_password_sets_session_cookie_and_redirects() {
     let app = TestApp::new();
     let (headers, token) = anon_join(&app);
-    let response = join(&app, headers, &token, "2026003", "026003").await;
+    let response = join(&app, headers, &token, "2026003", "p3").await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     assert_eq!(
         header_value(&response, header::LOCATION).as_deref(),
@@ -140,7 +140,7 @@ async fn join_rejects_wrong_password_and_unknown_id_alike() {
     // 名单里没有这个人和密码不对必须是同一句话。
     assert!(!body.contains("不在名单"));
 
-    let response = join(&app, headers, &token, "2029999", "026001").await;
+    let response = join(&app, headers, &token, "2029999", "p1").await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert!(body_string(response).await.contains("账号或密码错误"));
 }
@@ -154,7 +154,7 @@ async fn join_rejects_missing_or_wrong_csrf() {
             HeaderMap::new(),
             form_body(&[
                 ("student_id", "2026003"),
-                ("password", "026003"),
+                ("password", "p3"),
                 ("csrf", "nope"),
             ]),
         )
@@ -162,7 +162,7 @@ async fn join_rejects_missing_or_wrong_csrf() {
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
     let (headers, _token) = anon_join(&app);
-    let response = join(&app, headers, "wrong-token", "2026003", "026003").await;
+    let response = join(&app, headers, "wrong-token", "2026003", "p3").await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
@@ -216,9 +216,9 @@ async fn status_json_has_only_two_fields_and_tracks_phase() {
 
     app.end_contest();
     let response = app.get("/c/demo/status", headers).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
     let body: serde_json::Value = serde_json::from_str(&body_string(response).await).unwrap();
-    assert_eq!(body["state"], "ended");
-    assert_eq!(body["remainingSeconds"], 0);
+    assert_eq!(body["error"]["code"], "contest_ended");
 }
 
 #[tokio::test]
@@ -258,22 +258,110 @@ async fn problem_and_all_pages_render_statement_math_and_editor() {
     assert!(!body.contains("action=\"/c/demo/submissions\""));
     assert!(body.contains("/static/vendor/mathjax/tex-svg.js"));
 
-    app.end_contest();
-    assert_eq!(
-        app.get("/c/demo/p/A", headers.clone()).await.status(),
-        StatusCode::OK
-    );
-    assert_eq!(
-        app.get("/c/demo/all", headers).await.status(),
-        StatusCode::OK
-    );
-
     assert_eq!(
         app.get("/c/demo/p/Z", app.student_headers("2026001"))
             .await
             .status(),
         StatusCode::NOT_FOUND
     );
+
+    app.end_contest();
+    for uri in ["/c/demo/p/A", "/c/demo/all"] {
+        let response = app.get(uri, headers.clone()).await;
+        assert_eq!(response.status(), StatusCode::SEE_OTHER, "uri={uri}");
+        assert_eq!(
+            header_value(&response, header::LOCATION).as_deref(),
+            Some("/c/demo"),
+            "uri={uri}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn ended_contest_shows_closed_page_and_blocks_student_routes() {
+    let app = TestApp::new();
+    app.start_contest();
+    let (headers, _) = app.student_auth("2026001");
+    app.end_contest();
+
+    let response = app.get("/c/demo", headers.clone()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let set_cookie = header_value(&response, header::SET_COOKIE).unwrap();
+    assert!(set_cookie.contains("lc_s_demo="));
+    assert!(set_cookie.contains("Max-Age=0"));
+    let body = body_string(response).await;
+    assert!(body.contains("比赛已结束"));
+    assert!(!body.contains("题目列表"));
+    assert!(!body.contains("排行榜"));
+
+    let response = app.get("/c/demo/join", HeaderMap::new()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_string(response).await;
+    assert!(body.contains("比赛已结束"));
+    assert!(!body.contains("进入比赛"));
+
+    for uri in [
+        "/c/demo/_mine",
+        "/c/demo/_rank",
+        "/c/demo/status",
+        "/c/demo/p/A",
+        "/c/demo/all",
+    ] {
+        let response = app.get(uri, headers.clone()).await;
+        assert!(
+            response.status() == StatusCode::FORBIDDEN
+                || response.status() == StatusCode::SEE_OTHER,
+            "uri={uri} status={}",
+            response.status()
+        );
+    }
+}
+
+#[tokio::test]
+async fn timer_end_also_closes_student_side() {
+    let app = TestApp::new();
+    let (headers, _) = app.student_auth("2026001");
+    app.expire_contest();
+
+    let response = app.get("/c/demo", headers.clone()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(body_string(response).await.contains("比赛已结束"));
+
+    let response = app.get("/c/demo/status", headers).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn old_session_logout_does_not_kick_new_session() {
+    let app = TestApp::new();
+    app.start_contest();
+    let (first, csrf) = app.student_auth("2026001");
+    let (second, _) = app.student_auth("2026001");
+
+    let response = app
+        .post(
+            "/logout",
+            first,
+            form_body(&[("contest_id", "demo"), ("csrf", &csrf)]),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+
+    let response = app.get("/c/demo/_mine", second).await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn second_login_replaces_previous_session() {
+    let app = TestApp::new();
+    app.start_contest();
+    let (first, _) = app.student_auth("2026001");
+    let (second, _) = app.student_auth("2026001");
+
+    let response = app.get("/c/demo/_mine", first).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let response = app.get("/c/demo/_mine", second).await;
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]
@@ -281,7 +369,7 @@ async fn logout_clears_student_cookie_with_csrf() {
     let app = TestApp::new();
     let (headers, csrf) = app.student_auth("2026001");
     let body = form_body(&[("contest_id", "demo"), ("csrf", &csrf)]);
-    let response = app.post("/logout", headers, body).await;
+    let response = app.post("/logout", headers.clone(), body).await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     assert_eq!(
         header_value(&response, header::LOCATION).as_deref(),
@@ -290,6 +378,9 @@ async fn logout_clears_student_cookie_with_csrf() {
     let set_cookie = header_value(&response, header::SET_COOKIE).unwrap();
     assert!(set_cookie.contains("lc_s_demo="));
     assert!(set_cookie.contains("Max-Age=0"));
+
+    let response = app.get("/c/demo/_mine", headers).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]

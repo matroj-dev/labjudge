@@ -8,6 +8,9 @@
   {% if error.len() > 0 %}
   <div class="error-box">{{ error }}</div>
   {% endif %}
+  {% if notice.len() > 0 %}
+  <div class="error-box">{{ notice }}</div>
+  {% endif %}
 
   <form method="post" action="/c/{{ contest_id }}/join" class="stack" autocomplete="off">
     <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -17,12 +20,12 @@
     </label>
     <label>
       密码
-      <input type="password" name="password" maxlength="64" required autocomplete="new-password">
+      <input type="password" name="password" required autocomplete="new-password">
     </label>
 
     <button type="submit">进入比赛</button>
   </form>
 
-  <p class="muted">密码是账号的后 6 位。登不进去请联系老师。</p>
+  <p class="muted">账号和密码由老师发放。登不进去请联系老师。</p>
 </section>
 {% endblock %}

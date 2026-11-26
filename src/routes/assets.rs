@@ -9,9 +9,10 @@ use axum::routing::get;
 use axum::Router;
 use rust_embed::RustEmbed;
 
-use super::access::{current_student, redirect_join};
+use super::access::{contest_phase, current_student, redirect_join};
 use super::error::AppError;
 use crate::app_state::AppState;
+use crate::model::Phase;
 
 #[derive(RustEmbed)]
 #[folder = "static/"]
@@ -52,6 +53,9 @@ async fn problem_file(
     let Some((runtime, _session)) = current_student(&state, &headers, &contest_id, false)? else {
         return Ok(redirect_join(&contest_id));
     };
+    if contest_phase(&runtime)? == Phase::Ended {
+        return Err(AppError::not_found("比赛已结束"));
+    }
     let Some(problem) = runtime.package.find_problem(&problem_key) else {
         return Err(AppError::not_found("题目不存在"));
     };

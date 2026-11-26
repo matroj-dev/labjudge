@@ -12,13 +12,14 @@ use axum::Router;
 use serde::Deserialize;
 
 use super::access::{
-    contest_or_error, current_student, redirect_join, remaining_seconds, render_html, student_name,
-    with_cookie,
+    contest_or_error, contest_phase, current_student, redirect_join, remaining_seconds,
+    render_html, student_name, with_cookie,
 };
 use super::error::AppError;
 use crate::app_state::AppState;
 use crate::auth::session::{
-    build_cookie, clear_cookie, read_cookie, student_cookie_name, CSRF_COOKIE, SESSION_SECONDS,
+    build_cookie, clear_cookie, new_session_id, read_cookie, student_cookie_name, CSRF_COOKIE,
+    SESSION_SECONDS,
 };
 use crate::contest::lifecycle::phase;
 use crate::contest::validate::is_valid_contest_id;
@@ -29,7 +30,7 @@ use crate::store::NewSubmission;
 use crate::timefmt::{format_local, now_ms};
 use crate::views::student::{
     format_remaining, phase_label, AllProblemsTemplate, ContestListItem, ContestListTemplate,
-    HomeTemplate, JoinTemplate, ProblemListItem, ProblemTemplate, StatementView,
+    EndedTemplate, HomeTemplate, JoinTemplate, ProblemListItem, ProblemTemplate, StatementView,
 };
 
 pub fn router() -> Router<AppState> {
@@ -43,7 +44,7 @@ pub fn router() -> Router<AppState> {
         .route("/logout", post(logout))
 }
 
-async fn contest_list(State(state): State<AppState>) -> Result<Html<String>, AppError> {
+async fn contest_list(State(state): State<AppState>) -> Result<Response, AppError> {
     let mut contests = Vec::new();
     for runtime in state.registry.list() {
         let contest_state = runtime
@@ -57,7 +58,9 @@ async fn contest_list(State(state): State<AppState>) -> Result<Html<String>, App
             state_label: phase_label(current_phase).to_string(),
             duration_minutes: runtime.package.duration_minutes,
             problem_count: runtime.package.problems.len(),
-            visibility_label: if contest_state.leaderboard_visible {
+            visibility_label: if current_phase == Phase::Ended {
+                "学生端已关闭".to_string()
+            } else if contest_state.leaderboard_visible {
                 "榜单公开".to_string()
             } else {
                 "榜单未公开".to_string()
@@ -70,13 +73,22 @@ async fn contest_list(State(state): State<AppState>) -> Result<Html<String>, App
 async fn join_get(
     State(state): State<AppState>,
     Path(contest_id): Path<String>,
+    Query(query): Query<JoinQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
     let runtime = contest_or_error(&state, &contest_id, false)?;
+    if contest_phase(&runtime)? == Phase::Ended {
+        return ended_page(&runtime);
+    }
     if current_student(&state, &headers, &contest_id, false)?.is_some() {
         return Ok(Redirect::to(&format!("/c/{contest_id}")).into_response());
     }
 
+    let notice = if query.reason.as_deref() == Some("invalid") {
+        "登录已失效，请重新登录。".to_string()
+    } else {
+        String::new()
+    };
     let (cookie_value, form_token) = state.csrf.issue_anon();
     let html = JoinTemplate {
         contest_id,
@@ -84,12 +96,18 @@ async fn join_get(
         csrf: form_token,
         student_id: String::new(),
         error: String::new(),
+        notice,
     };
-    let response = render_html(html)?.into_response();
+    let response = render_html(html)?;
     Ok(with_cookie(
         response,
         build_cookie(CSRF_COOKIE, &cookie_value, SESSION_SECONDS),
     ))
+}
+
+#[derive(Deserialize, Default)]
+struct JoinQuery {
+    reason: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -114,6 +132,9 @@ async fn join_post(
     }
 
     let runtime = contest_or_error(&state, &contest_id, false)?;
+    if contest_phase(&runtime)? == Phase::Ended {
+        return ended_page(&runtime);
+    }
     let student_id = form.student_id.trim();
     let Some(student) = runtime
         .package
@@ -133,9 +154,14 @@ async fn join_post(
         .store
         .upsert_participant(&student, now)
         .map_err(|error| AppError::internal(format!("记录参赛信息失败: {error}")))?;
+    let session_id = new_session_id();
+    runtime
+        .store
+        .upsert_session(&student.student_id, &session_id, now)
+        .map_err(|error| AppError::internal(format!("记录登录会话失败: {error}")))?;
     let token = state
         .session
-        .sign_student(&contest_id, &student.student_id, now);
+        .sign_student(&contest_id, &student.student_id, &session_id, now);
 
     let mut response = Redirect::to(&format!("/c/{contest_id}")).into_response();
     response.headers_mut().append(
@@ -157,6 +183,7 @@ fn join_error_page(
         csrf: form.csrf.clone(),
         student_id: form.student_id.clone(),
         error: message.to_string(),
+        notice: String::new(),
     };
     let html = html
         .render()
@@ -164,11 +191,26 @@ fn join_error_page(
     Ok((status, Html(html)).into_response())
 }
 
+fn ended_page(runtime: &ContestRuntime) -> Result<Response, AppError> {
+    let response = render_html(EndedTemplate {
+        contest_id: runtime.package.id.clone(),
+        contest_title: runtime.package.title.clone(),
+    })?;
+    Ok(with_cookie(
+        response,
+        clear_cookie(&student_cookie_name(&runtime.package.id)),
+    ))
+}
+
 async fn home(
     State(state): State<AppState>,
     Path(contest_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    let runtime = contest_or_error(&state, &contest_id, false)?;
+    if contest_phase(&runtime)? == Phase::Ended {
+        return ended_page(&runtime);
+    }
     let Some((runtime, session)) = current_student(&state, &headers, &contest_id, false)? else {
         return Ok(redirect_join(&contest_id));
     };
@@ -270,6 +312,10 @@ async fn all_problems(
     Path(contest_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    let runtime = contest_or_error(&state, &contest_id, false)?;
+    if contest_phase(&runtime)? == Phase::Ended {
+        return Ok(Redirect::to(&format!("/c/{contest_id}")).into_response());
+    }
     let Some((runtime, session)) = current_student(&state, &headers, &contest_id, false)? else {
         return Ok(redirect_join(&contest_id));
     };
@@ -292,6 +338,10 @@ async fn problem_page(
     Query(query): Query<ProblemQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    let runtime = contest_or_error(&state, &contest_id, false)?;
+    if contest_phase(&runtime)? == Phase::Ended {
+        return Ok(Redirect::to(&format!("/c/{contest_id}")).into_response());
+    }
     let Some((runtime, session)) = current_student(&state, &headers, &contest_id, false)? else {
         return Ok(redirect_join(&contest_id));
     };
@@ -370,8 +420,12 @@ async fn submit(
         .store
         .state()
         .map_err(|error| AppError::internal(format!("读取比赛状态失败: {error}")))?;
-    if phase(&contest_state, now) != Phase::Running {
-        return Err(AppError::bad_request("比赛未开始或已结束"));
+    let current_phase = phase(&contest_state, now);
+    if current_phase == Phase::Ended {
+        return Ok(Redirect::to(&format!("/c/{contest_id}")).into_response());
+    }
+    if current_phase != Phase::Running {
+        return Err(AppError::bad_request("比赛尚未开始"));
     }
 
     let source_bytes = form.source.as_bytes();
@@ -481,6 +535,18 @@ async fn logout(
         {
             if !state.csrf.verify_session(&session.token, &form.csrf) {
                 return Err(AppError::forbidden("表单校验失败"));
+            }
+            if let Some(runtime) = state.registry.get(&form.contest_id) {
+                let current = runtime
+                    .store
+                    .session_id(&session.student_id)
+                    .map_err(|error| AppError::internal(format!("读取会话失败: {error}")))?;
+                if current.as_deref() == Some(session.session_id.as_str()) {
+                    runtime
+                        .store
+                        .delete_session(&session.student_id)
+                        .map_err(|error| AppError::internal(format!("删除会话失败: {error}")))?;
+                }
             }
         }
     }

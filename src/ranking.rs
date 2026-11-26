@@ -109,7 +109,11 @@ mod tests {
     fn roster() -> Roster {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("students.csv");
-        std::fs::write(&path, "name,student_id\n张三,1\n李四,2\n王五,3\n").unwrap();
+        std::fs::write(
+            &path,
+            "name,student_id,password\n张三,1,p1\n李四,2,p2\n王五,3,p3\n",
+        )
+        .unwrap();
         Roster::load(&path).unwrap()
     }
 

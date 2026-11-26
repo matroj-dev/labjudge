@@ -107,6 +107,7 @@ mod tests {
             name: name.to_string(),
             school: "第一中学".to_string(),
             grade: "七年级".to_string(),
+            password: String::new(),
         }
     }
 

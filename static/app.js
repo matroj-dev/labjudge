@@ -14,6 +14,18 @@
     return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
   }
 
+  function redirectForStatus(status, contestId) {
+    if (status === 401) {
+      window.location.href = `/c/${contestId}/join?reason=invalid`;
+      return true;
+    }
+    if (status === 403) {
+      window.location.href = `/c/${contestId}`;
+      return true;
+    }
+    return false;
+  }
+
   function initCountdown() {
     const element = document.querySelector("[data-countdown]");
     if (!element) {
@@ -40,6 +52,9 @@
         const response = await fetch(`/c/${contestId}/status`, {
           headers: { Accept: "application/json" },
         });
+        if (redirectForStatus(response.status, contestId)) {
+          return;
+        }
         if (!response.ok) {
           return;
         }
@@ -119,6 +134,9 @@
         const response = await fetch(`/c/${contestId}/status`, {
           headers: { Accept: "application/json" },
         });
+        if (redirectForStatus(response.status, contestId)) {
+          return;
+        }
         if (!response.ok) {
           return;
         }
@@ -164,6 +182,8 @@
       const interval = Number(element.dataset.interval || "2000");
       const content = element.querySelector(".fragment-content");
       const error = element.querySelector("[data-poll-error]");
+      const contestMatch = url.match(/^\/c\/([^/]+)\//);
+      const contestId = contestMatch ? contestMatch[1] : null;
       let lastHtml = null;
 
       const refresh = async () => {
@@ -173,6 +193,9 @@
         }
         try {
           const response = await fetch(url, { headers: { Accept: "text/html" } });
+          if (contestId && redirectForStatus(response.status, contestId)) {
+            return;
+          }
           if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
           }

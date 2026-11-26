@@ -62,7 +62,7 @@ mod tests {
         let path = dir.path().join("students.csv");
         std::fs::write(
             &path,
-            "name,student_id,school,grade\n张三,1,一中,七年级\n李四,2,,\n",
+            "name,student_id,password,school,grade\n张三,1,p1,一中,七年级\n李四,2,p2,,\n",
         )
         .unwrap();
         Roster::load(&path).unwrap()

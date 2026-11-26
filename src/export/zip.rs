@@ -66,7 +66,7 @@ mod tests {
     fn roster() -> Roster {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("students.csv");
-        fs::write(&path, "name,student_id\n张三,2026/001\n").unwrap();
+        fs::write(&path, "name,student_id,password\n张三,2026/001,p\n").unwrap();
         Roster::load(&path).unwrap()
     }
 

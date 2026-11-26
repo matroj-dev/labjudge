@@ -173,7 +173,10 @@ pub fn run_limited(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    #[cfg(windows)]
+    use super::run_limited;
+    #[cfg(windows)]
+    use std::time::Duration;
 
     #[cfg(windows)]
     #[test]

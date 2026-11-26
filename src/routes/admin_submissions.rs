@@ -15,7 +15,7 @@ use crate::model::SubmissionStatus;
 use crate::services::registry::ContestRuntime;
 use crate::timefmt::{format_local, now_ms};
 use crate::views::admin::{AdminSubmissionRow, AdminSubmissionTemplate, AdminSubmissionsTemplate};
-use crate::views::fragments::{status_label, submission_view};
+use crate::views::fragments::{status_label, submission_view_raw};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -92,7 +92,7 @@ async fn detail(
         .ok_or_else(|| AppError::not_found("提交不存在"))?;
     let source =
         fs::read_to_string(&row.source_path).unwrap_or_else(|_| "<源码文件缺失>".to_string());
-    let view = submission_view(&row, true);
+    let view = submission_view_raw(&row, true);
 
     Ok(render_html(AdminSubmissionTemplate {
         sid,

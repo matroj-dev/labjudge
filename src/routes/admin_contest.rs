@@ -141,6 +141,10 @@ async fn end(
         .store
         .set_state(&contest_state)
         .map_err(|error| AppError::internal(format!("保存比赛状态失败: {error}")))?;
+    runtime
+        .store
+        .clear_sessions()
+        .map_err(|error| AppError::internal(format!("清空学生会话失败: {error}")))?;
     log(&runtime, "教师提前结束");
     Ok(Redirect::to(&format!("/admin/c/{contest_id}")).into_response())
 }
@@ -161,12 +165,19 @@ async fn extend(
         .store
         .state()
         .map_err(|error| AppError::internal(format!("读取比赛状态失败: {error}")))?;
+    let was_ended = phase(&contest_state, now_ms()) == Phase::Ended;
     apply_extend(&mut contest_state, now_ms(), form.minutes)
         .map_err(|error| AppError::bad_request(error.to_string()))?;
     runtime
         .store
         .set_state(&contest_state)
         .map_err(|error| AppError::internal(format!("保存比赛状态失败: {error}")))?;
+    if was_ended {
+        runtime
+            .store
+            .clear_sessions()
+            .map_err(|error| AppError::internal(format!("清空学生会话失败: {error}")))?;
+    }
     log(&runtime, &format!("教师延长 {} 分钟", form.minutes));
     Ok(Redirect::to(&format!("/admin/c/{contest_id}")).into_response())
 }
@@ -283,6 +294,10 @@ async fn reload(
         .store
         .clear_participants()
         .map_err(|error| AppError::internal(format!("清空参赛记录失败: {error}")))?;
+    runtime
+        .store
+        .clear_sessions()
+        .map_err(|error| AppError::internal(format!("清空学生会话失败: {error}")))?;
     state.registry.insert_runtime(Arc::new(ContestRuntime {
         package: Arc::new(package),
         store: runtime.store.clone(),

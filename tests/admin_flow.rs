@@ -211,9 +211,19 @@ async fn admin_start_end_extend_leaderboard_reload_and_reset() {
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     assert!(app.store().state().unwrap().leaderboard_visible);
 
+    let (student_headers, _) = app.student_auth("2026001");
     let response = admin_post(&app, "/admin/c/demo/end", &[]).await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     assert_eq!(phase(&app.store().state().unwrap(), now_ms()), Phase::Ended);
+    assert_eq!(
+        app.get("/c/demo/_mine", student_headers.clone())
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert!(body_string(app.get("/c/demo/join", HeaderMap::new()).await)
+        .await
+        .contains("比赛已结束"));
 
     let response = admin_post(&app, "/admin/c/demo/extend", &[("minutes", "5")]).await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
@@ -221,6 +231,9 @@ async fn admin_start_end_extend_leaderboard_reload_and_reset() {
         phase(&app.store().state().unwrap(), now_ms()),
         Phase::Running
     );
+    assert!(body_string(app.get("/c/demo/join", HeaderMap::new()).await)
+        .await
+        .contains("进入比赛"));
 
     let response = app.get("/admin/c/demo", headers.clone()).await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -253,7 +266,7 @@ async fn admin_reload_updates_roster_only_before_start_and_blocks_active_reset()
     let students = app.contest_dir().join("students.csv");
     fs::write(
         &students,
-        "name,student_id\n张三,2026001\n李四,2026003\n王五,2026004\n",
+        "name,student_id,password\n张三,2026001,p1\n李四,2026003,p3\n王五,2026004,p4\n",
     )
     .unwrap();
     let response = admin_post(&app, "/admin/c/demo/reload", &[]).await;

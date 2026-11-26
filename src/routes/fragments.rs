@@ -1,16 +1,19 @@
 use askama::Template;
 use axum::extract::{Path, State};
-use axum::http::HeaderMap;
-use axum::response::{Html, IntoResponse, Response};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde_json::json;
 
-use super::access::{current_student, remaining_seconds};
+use super::access::{
+    contest_or_error, contest_phase, current_student, no_store_html, remaining_seconds,
+};
 use super::error::AppError;
 use crate::app_state::AppState;
 use crate::auth::session::StudentSession;
 use crate::contest::lifecycle::phase;
+use crate::model::Phase;
 use crate::ranking::compute_ranking;
 use crate::services::registry::ContestRuntime;
 use crate::timefmt::{format_local, now_ms};
@@ -31,6 +34,14 @@ async fn status(
     Path(contest_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    let runtime = contest_or_error(&state, &contest_id, true)?;
+    if contest_phase(&runtime)? == Phase::Ended {
+        return Err(AppError::json(
+            StatusCode::FORBIDDEN,
+            "contest_ended",
+            "比赛已结束",
+        ));
+    }
     let Some((runtime, _session)) = current_student(&state, &headers, &contest_id, true)? else {
         return Err(AppError::unauthorized_json("请先登录参赛"));
     };
@@ -40,37 +51,50 @@ async fn status(
         .map_err(|error| AppError::internal(format!("读取比赛状态失败: {error}")))?;
     let now = now_ms();
     let remaining = remaining_seconds(&contest_state, now);
-    Ok(Json(json!({
+    let mut response = Json(json!({
         "state": phase(&contest_state, now).as_str(),
         "remainingSeconds": remaining,
     }))
-    .into_response())
+    .into_response();
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    Ok(response)
 }
 
 async fn mine_fragment(
     State(state): State<AppState>,
     Path(contest_id): Path<String>,
     headers: HeaderMap,
-) -> Result<Html<String>, AppError> {
+) -> Result<Response, AppError> {
+    let runtime = contest_or_error(&state, &contest_id, true)?;
+    if contest_phase(&runtime)? == Phase::Ended {
+        return Err(AppError::page(StatusCode::FORBIDDEN, "比赛已结束"));
+    }
     let Some((runtime, session)) = current_student(&state, &headers, &contest_id, true)? else {
         return Err(AppError::unauthorized_json("请先登录参赛"));
     };
     let visible = leaderboard_visible(&runtime)?;
     let html = mine_html(&runtime, &session, visible)?;
-    Ok(Html(html))
+    Ok(no_store_html(html))
 }
 
 async fn rank_fragment(
     State(state): State<AppState>,
     Path(contest_id): Path<String>,
     headers: HeaderMap,
-) -> Result<Html<String>, AppError> {
+) -> Result<Response, AppError> {
+    let runtime = contest_or_error(&state, &contest_id, true)?;
+    if contest_phase(&runtime)? == Phase::Ended {
+        return Err(AppError::page(StatusCode::FORBIDDEN, "比赛已结束"));
+    }
     let Some((runtime, _session)) = current_student(&state, &headers, &contest_id, true)? else {
         return Err(AppError::unauthorized_json("请先登录参赛"));
     };
     let visible = leaderboard_visible(&runtime)?;
     let html = rank_html(&runtime, visible)?;
-    Ok(Html(html))
+    Ok(no_store_html(html))
 }
 
 pub(crate) fn leaderboard_visible(runtime: &ContestRuntime) -> Result<bool, AppError> {

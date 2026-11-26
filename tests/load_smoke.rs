@@ -64,9 +64,9 @@ impl LoadApp {
             &contest.join("contest.json"),
             r#"{"title":"压测赛","durationMinutes":60,"problems":[{"key":"A","dir":"problems/A"}]}"#,
         );
-        let mut roster = String::from("name,student_id\n");
+        let mut roster = String::from("name,student_id,password\n");
         for index in 1..=CLIENTS {
-            roster.push_str(&format!("学生{index:02},S{index:04}\n"));
+            roster.push_str(&format!("学生{index:02},S{index:04},P{index:04}\n"));
         }
         write(&contest.join("students.csv"), &roster);
         write(

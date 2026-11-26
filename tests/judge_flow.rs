@@ -155,8 +155,11 @@ async fn submit_enforces_csrf_size_cooldown_and_phase() {
 
     app.end_contest();
     let response = submit(&app, "2026001", "B", "late", None).await;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert!(body_string(response).await.contains("未开始或已结束"));
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        header_value(&response, header::LOCATION).as_deref(),
+        Some("/c/demo")
+    );
 }
 
 #[tokio::test]
