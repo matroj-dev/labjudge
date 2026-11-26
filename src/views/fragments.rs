@@ -160,6 +160,9 @@ fn submission_view_with_compile(
 }
 
 /// 只保留学生自己 main.cpp 的诊断行，避免把被包含文件的内容带回浏览器。
+///
+/// 链接期错误（`undefined reference`、`collect2/ld returned`）不带 `main.cpp:` 前缀，
+/// 但正是学生最需要看的信息，所以单独放行。
 fn sanitize_compile_output(raw: &str) -> String {
     let mut kept = Vec::new();
     let mut omitted = false;
@@ -171,7 +174,7 @@ fn sanitize_compile_output(raw: &str) -> String {
             omitted = true;
             continue;
         }
-        if line.contains("main.cpp:") {
+        if is_student_diagnostic(line) {
             kept.push(line);
         } else if !line.trim().is_empty() {
             omitted = true;
@@ -189,6 +192,17 @@ fn sanitize_compile_output(raw: &str) -> String {
         text.push_str("\n（已省略标准库/其他文件的诊断）");
     }
     text
+}
+
+fn is_student_diagnostic(line: &str) -> bool {
+    const LINKER_HINTS: [&str; 5] = [
+        "undefined reference to",
+        "multiple definition of",
+        "duplicate symbol",
+        "ld returned",
+        "cc1plus.exe:",
+    ];
+    line.contains("main.cpp:") || LINKER_HINTS.iter().any(|hint| line.contains(hint))
 }
 
 pub fn status_label(status: SubmissionStatus) -> &'static str {
@@ -269,6 +283,19 @@ mod tests {
 
         let raw = submission_view_raw(&row, true);
         assert!(raw.compile_output.contains("SECRET"));
+    }
+
+    #[test]
+    fn student_compile_output_keeps_linker_errors() {
+        let mut row = row();
+        row.compile_output = Some(
+            "C:\\mingw64\\bin\\ld.exe: main.cpp:(.text+0x1a): undefined reference to `foo()'\n\
+             collect2.exe: error: ld returned 1 exit status\n"
+                .to_string(),
+        );
+        let view = submission_view(&row, true);
+        assert!(view.compile_output.contains("undefined reference to"));
+        assert!(view.compile_output.contains("ld returned 1"));
     }
 
     #[test]

@@ -81,12 +81,15 @@ pub fn current_student(
     Ok(Some((runtime, session)))
 }
 
-pub fn contest_phase(runtime: &ContestRuntime) -> Result<Phase, AppError> {
+pub fn contest_state(runtime: &ContestRuntime) -> Result<ContestState, AppError> {
     runtime
         .store
         .state()
-        .map(|state| phase(&state, now_ms()))
         .map_err(|error| AppError::internal(format!("读取比赛状态失败: {error}")))
+}
+
+pub fn contest_phase(runtime: &ContestRuntime) -> Result<Phase, AppError> {
+    contest_state(runtime).map(|state| phase(&state, now_ms()))
 }
 
 pub fn student_name(runtime: &ContestRuntime, student_id: &str) -> String {
@@ -142,8 +145,16 @@ pub fn no_store_html(html: String) -> Response {
     response
 }
 
-pub fn redirect_join(contest_id: &str) -> Response {
-    Redirect::to(&format!("/c/{contest_id}/join")).into_response()
+pub fn redirect_join(contest_id: &str, stale: bool) -> Response {
+    if stale {
+        Redirect::to(&format!("/c/{contest_id}/join?reason=invalid")).into_response()
+    } else {
+        Redirect::to(&format!("/c/{contest_id}/join")).into_response()
+    }
+}
+
+pub fn has_student_cookie(headers: &HeaderMap, contest_id: &str) -> bool {
+    read_cookie(headers, &student_cookie_name(contest_id)).is_some()
 }
 
 pub fn with_cookie(mut response: Response, cookie: HeaderValue) -> Response {

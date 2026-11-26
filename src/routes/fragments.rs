@@ -7,7 +7,8 @@ use axum::{Json, Router};
 use serde_json::json;
 
 use super::access::{
-    contest_or_error, contest_phase, current_student, no_store_html, remaining_seconds,
+    contest_or_error, contest_phase, contest_state, current_student, no_store_html,
+    remaining_seconds,
 };
 use super::error::AppError;
 use crate::app_state::AppState;
@@ -35,21 +36,18 @@ async fn status(
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
     let runtime = contest_or_error(&state, &contest_id, true)?;
-    if contest_phase(&runtime)? == Phase::Ended {
+    let contest_state = contest_state(&runtime)?;
+    let now = now_ms();
+    if phase(&contest_state, now) == Phase::Ended {
         return Err(AppError::json(
             StatusCode::FORBIDDEN,
             "contest_ended",
             "比赛已结束",
         ));
     }
-    let Some((runtime, _session)) = current_student(&state, &headers, &contest_id, true)? else {
+    let Some((_runtime, _session)) = current_student(&state, &headers, &contest_id, true)? else {
         return Err(AppError::unauthorized_json("请先登录参赛"));
     };
-    let contest_state = runtime
-        .store
-        .state()
-        .map_err(|error| AppError::internal(format!("读取比赛状态失败: {error}")))?;
-    let now = now_ms();
     let remaining = remaining_seconds(&contest_state, now);
     let mut response = Json(json!({
         "state": phase(&contest_state, now).as_str(),

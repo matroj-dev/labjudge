@@ -9,7 +9,7 @@ use axum::routing::get;
 use axum::Router;
 use rust_embed::RustEmbed;
 
-use super::access::{contest_phase, current_student, redirect_join};
+use super::access::{contest_phase, current_student, has_student_cookie, redirect_join};
 use super::error::AppError;
 use crate::app_state::AppState;
 use crate::model::Phase;
@@ -51,7 +51,8 @@ async fn problem_file(
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
     let Some((runtime, _session)) = current_student(&state, &headers, &contest_id, false)? else {
-        return Ok(redirect_join(&contest_id));
+        let stale = has_student_cookie(&headers, &contest_id);
+        return Ok(redirect_join(&contest_id, stale));
     };
     if contest_phase(&runtime)? == Phase::Ended {
         return Err(AppError::not_found("比赛已结束"));

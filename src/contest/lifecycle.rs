@@ -53,6 +53,11 @@ pub fn apply_end(state: &mut ContestState, now_ms: i64) -> Result<(), LifecycleE
     if state.started_at.is_none() {
         return Err(LifecycleError::NotStarted);
     }
+    // 重复点「结束」、或到时自动结束后再点，都不该把结束时间往后推：
+    // 结束时间是「恢复比赛」和成绩时间线的基准，只能被第一次结束确定。
+    if state.ended_early || state.ends_at.is_some_and(|ends_at| ends_at <= now_ms) {
+        return Ok(());
+    }
     state.ends_at = Some(now_ms);
     state.ended_early = true;
     Ok(())
@@ -150,6 +155,31 @@ mod tests {
         apply_extend(&mut state, 1_000_000, 5).unwrap();
         assert_eq!(state.ends_at, Some(1_300_000));
         assert_eq!(phase(&state, 1_000_001), Phase::Running);
+    }
+
+    #[test]
+    fn ending_twice_keeps_the_first_end_time() {
+        let mut state = ContestState::default();
+        apply_start(&mut state, 0, 60).unwrap();
+        apply_end(&mut state, 10_000).unwrap();
+        apply_end(&mut state, 900_000).unwrap();
+        assert_eq!(state.ends_at, Some(10_000));
+        assert!(state.ended_early);
+
+        // 恢复后再次结束，也要以新的结束动作为准。
+        apply_extend(&mut state, 1_000_000, 5).unwrap();
+        apply_end(&mut state, 1_100_000).unwrap();
+        assert_eq!(state.ends_at, Some(1_100_000));
+    }
+
+    #[test]
+    fn ending_after_natural_expiry_does_not_move_end_time() {
+        let mut state = ContestState::default();
+        apply_start(&mut state, 0, 60).unwrap();
+        // 3_600_000 是原本的结束时间，此刻已经到时。
+        apply_end(&mut state, 4_000_000).unwrap();
+        assert_eq!(state.ends_at, Some(3_600_000));
+        assert!(!state.ended_early);
     }
 
     #[test]

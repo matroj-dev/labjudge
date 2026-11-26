@@ -176,7 +176,9 @@ mod tests {
     #[cfg(windows)]
     use super::run_limited;
     #[cfg(windows)]
-    use std::time::Duration;
+    use std::process::Command;
+    #[cfg(windows)]
+    use std::time::{Duration, Instant};
 
     #[cfg(windows)]
     #[test]

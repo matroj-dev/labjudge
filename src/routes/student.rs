@@ -12,8 +12,8 @@ use axum::Router;
 use serde::Deserialize;
 
 use super::access::{
-    contest_or_error, contest_phase, current_student, redirect_join, remaining_seconds,
-    render_html, student_name, with_cookie,
+    contest_or_error, contest_phase, contest_state, current_student, has_student_cookie,
+    redirect_join, remaining_seconds, render_html, student_name, with_cookie,
 };
 use super::error::AppError;
 use crate::app_state::AppState;
@@ -208,17 +208,15 @@ async fn home(
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
     let runtime = contest_or_error(&state, &contest_id, false)?;
-    if contest_phase(&runtime)? == Phase::Ended {
+    let contest_state = contest_state(&runtime)?;
+    let now = now_ms();
+    if phase(&contest_state, now) == Phase::Ended {
         return ended_page(&runtime);
     }
     let Some((runtime, session)) = current_student(&state, &headers, &contest_id, false)? else {
-        return Ok(redirect_join(&contest_id));
+        let stale = has_student_cookie(&headers, &contest_id);
+        return Ok(redirect_join(&contest_id, stale));
     };
-    let contest_state = runtime
-        .store
-        .state()
-        .map_err(|error| AppError::internal(format!("读取比赛状态失败: {error}")))?;
-    let now = now_ms();
     let current_phase = phase(&contest_state, now);
     let remaining = remaining_seconds(&contest_state, now);
     let visible = contest_state.leaderboard_visible;
@@ -317,7 +315,8 @@ async fn all_problems(
         return Ok(Redirect::to(&format!("/c/{contest_id}")).into_response());
     }
     let Some((runtime, session)) = current_student(&state, &headers, &contest_id, false)? else {
-        return Ok(redirect_join(&contest_id));
+        let stale = has_student_cookie(&headers, &contest_id);
+        return Ok(redirect_join(&contest_id, stale));
     };
     if !contest_started(&runtime)? {
         return Ok(Redirect::to(&format!("/c/{contest_id}")).into_response());
@@ -343,7 +342,8 @@ async fn problem_page(
         return Ok(Redirect::to(&format!("/c/{contest_id}")).into_response());
     }
     let Some((runtime, session)) = current_student(&state, &headers, &contest_id, false)? else {
-        return Ok(redirect_join(&contest_id));
+        let stale = has_student_cookie(&headers, &contest_id);
+        return Ok(redirect_join(&contest_id, stale));
     };
     let Some(problem) = runtime.package.find_problem(&problem_key) else {
         return Err(AppError::not_found("题目不存在"));
@@ -406,7 +406,8 @@ async fn submit(
 ) -> Result<Response, AppError> {
     let Form(form) = form.map_err(|_| AppError::bad_request("表单格式错误"))?;
     let Some((runtime, session)) = current_student(&state, &headers, &contest_id, false)? else {
-        return Ok(redirect_join(&contest_id));
+        let stale = has_student_cookie(&headers, &contest_id);
+        return Ok(redirect_join(&contest_id, stale));
     };
     if !state.csrf.verify_session(&session.token, &form.csrf) {
         return Err(AppError::forbidden("表单校验失败，请刷新页面重试"));

@@ -71,6 +71,7 @@ impl Roster {
             let password = field(&record, password_index, "password", path, row)?;
             check_length(&name, 64, "name", path, row)?;
             check_length(&student_id, 64, "student_id", path, row)?;
+            check_length(&password, 64, "password", path, row)?;
 
             let school = school_index
                 .map(|index| record.get(index).unwrap_or("").trim().to_string())
@@ -232,6 +233,15 @@ mod tests {
         write(
             &path,
             &format!("name,student_id,password\n张三,{},p\n", "1".repeat(65)),
+        );
+        assert!(Roster::load(&path).is_err());
+
+        write(
+            &path,
+            &format!(
+                "name,student_id,password\n张三,2026001,{}\n",
+                "p".repeat(65)
+            ),
         );
         assert!(Roster::load(&path).is_err());
 
